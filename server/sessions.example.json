@@ -1,0 +1,50 @@
+{
+  "sessions": {
+    "1000000001": {
+      "last_seen_at": 1750000000,
+      "online": false,
+      "username": "EXAMPLE1",
+      "player_state": {
+        "schema_version": 1,
+        "map_id": 0,
+        "x": 48,
+        "y": 40,
+        "class_id": 1,
+        "level": 1,
+        "xp": 0,
+        "health": 3,
+        "max_health": 3,
+        "gold": 0,
+        "pvp_kills": 0,
+        "pvp_enabled": false,
+        "inventory": [],
+        "active_quest_id": 0,
+        "quests_completed": [],
+        "visited_zones": []
+      }
+    },
+    "1000000002": {
+      "last_seen_at": 1750000000,
+      "online": false,
+      "username": "EXAMPLE2",
+      "player_state": {
+        "schema_version": 1,
+        "map_id": 0,
+        "x": 50,
+        "y": 40,
+        "class_id": 2,
+        "level": 3,
+        "xp": 40,
+        "health": 4,
+        "max_health": 4,
+        "gold": 25,
+        "pvp_kills": 0,
+        "pvp_enabled": false,
+        "inventory": [],
+        "active_quest_id": 0,
+        "quests_completed": [],
+        "visited_zones": []
+      }
+    }
+  }
+}

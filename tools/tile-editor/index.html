@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FujiRealm Tile Editor</title>
+    <link rel="stylesheet" href="icons.css">
+    <link rel="stylesheet" href="style.css?v=4.0.0">
+</head>
+<body>
+    <input type="file" id="project-input" accept=".json" hidden>
+    <input type="file" id="font-input" accept=".fnt" hidden>
+
+    <header class="app-header">
+        <div class="brand-block">
+            <strong>FujiRealm</strong>
+            <span>Tile Editor</span>
+            <span id="dirty-indicator" class="dirty-indicator" hidden>Modified</span>
+        </div>
+        <nav class="header-actions" aria-label="Project actions">
+            <button id="load-project" class="button primary"><i class="bi bi-folder2-open"></i> Load Project</button>
+            <button id="save-project" class="button"><i class="bi bi-floppy"></i> Save Project</button>
+            <span class="divider"></span>
+            <button id="load-font" class="icon-button" title="Load 1 KB font" aria-label="Load font"><i class="bi bi-file-earmark-arrow-up"></i></button>
+            <button id="save-font" class="icon-button" title="Save 1 KB font" aria-label="Save font"><i class="bi bi-file-earmark-arrow-down"></i></button>
+            <button id="save-font-png" class="icon-button" title="Save font PNG" aria-label="Save font PNG"><i class="bi bi-image"></i></button>
+            <span class="divider"></span>
+            <button id="undo" class="icon-button" title="Undo" aria-label="Undo" disabled><i class="bi bi-arrow-counterclockwise"></i></button>
+            <button id="redo" class="icon-button" title="Redo" aria-label="Redo" disabled><i class="bi bi-arrow-clockwise"></i></button>
+            <span class="divider"></span>
+            <a class="button" href="lynx.html" title="Lynx 8x8 tile editor"><i class="bi bi-arrow-left-right"></i> Lynx Editor</a>
+        </nav>
+    </header>
+
+    <main class="workspace">
+        <aside class="left-rail">
+            <section class="panel palette-panel">
+                <header>Overworld Palette</header>
+                <div id="palette" class="palette"></div>
+            </section>
+
+            <section class="panel character-panel">
+                <header>
+                    <span>Character</span>
+                    <span id="active-char-label" class="mono">$00</span>
+                </header>
+                <div class="character-body">
+                    <div class="tool-column">
+                        <button data-char-action="up" class="icon-button" title="Shift up"><i class="bi bi-caret-up-fill"></i></button>
+                        <button data-char-action="down" class="icon-button" title="Shift down"><i class="bi bi-caret-down-fill"></i></button>
+                        <button data-char-action="left" class="icon-button" title="Shift left"><i class="bi bi-caret-left-fill"></i></button>
+                        <button data-char-action="right" class="icon-button" title="Shift right"><i class="bi bi-caret-right-fill"></i></button>
+                        <span class="tool-gap"></span>
+                        <button data-char-action="mirror-h" class="icon-button" title="Mirror horizontally"><i class="bi bi-arrow-left-right"></i></button>
+                        <button data-char-action="mirror-v" class="icon-button" title="Mirror vertically"><i class="bi bi-arrow-down-up"></i></button>
+                        <button data-char-action="clear" class="icon-button danger" title="Clear character"><i class="bi bi-eraser"></i></button>
+                    </div>
+                    <canvas id="character-canvas" width="256" height="256"></canvas>
+                </div>
+                <div id="character-users" class="usage-list"></div>
+            </section>
+
+            <section class="panel font-panel">
+                <header>
+                    <span>Full Charset</span>
+                    <span id="font-name" class="muted"></span>
+                </header>
+                <canvas id="font-canvas" width="288" height="288"></canvas>
+            </section>
+        </aside>
+
+        <section class="panel tile-workspace">
+            <header class="tile-header">
+                <div>
+                    <span id="tile-name">No project loaded</span>
+                    <span id="tile-binding" class="binding"></span>
+                </div>
+                <div id="animation-controls" class="animation-controls" hidden>
+                    <button id="animation-play" class="icon-button" title="Play animation" aria-label="Play animation"><i class="bi bi-play-fill"></i></button>
+                    <div id="animation-frames" class="animation-frames"></div>
+                </div>
+            </header>
+            <div class="tile-stage">
+                <canvas id="tile-canvas" width="512" height="512"></canvas>
+                <div id="empty-state" class="empty-state">
+                    <i class="bi bi-grid-1x2"></i>
+                    <span>Load a FujiRealm project</span>
+                </div>
+            </div>
+            <div class="quadrant-bar">
+                <div id="quadrant-buttons" class="quadrant-buttons"></div>
+                <button id="assign-character" class="button"><i class="bi bi-link-45deg"></i> Assign Active Character</button>
+                <label class="toggle-control">
+                    <input id="inverse-toggle" type="checkbox">
+                    <span>Inverse / COLPF3</span>
+                </label>
+            </div>
+            <footer>
+                <span id="tile-coordinate" class="mono">X=0 Y=0</span>
+                <span id="status-text" class="muted"></span>
+            </footer>
+        </section>
+
+        <aside class="panel library-panel">
+            <header>Tile Library</header>
+            <div class="library-controls">
+                <input id="tile-search" type="search" placeholder="Search tiles" aria-label="Search tiles">
+                <select id="category-filter" aria-label="Tile category"><option value="">All categories</option></select>
+            </div>
+            <div id="tile-list" class="tile-list"></div>
+        </aside>
+    </main>
+
+    <dialog id="message-dialog">
+        <form method="dialog">
+            <header id="dialog-title">FujiRealm Tile Editor</header>
+            <p id="dialog-message"></p>
+            <button class="button primary" value="ok">OK</button>
+        </form>
+    </dialog>
+
+    <footer class="page-credit">
+        FujiRealm Tile Editor &mdash; built on
+        <a href="https://www.atari.org.pl/charsetter/" target="_blank" rel="noopener">Charsetter</a>
+        by the 4Coloreditor Team, used with their kind permission. Thank you!
+    </footer>
+
+    <script src="tile-model.js?v=4.1.0"></script>
+    <script src="fujirealm.js?v=4.0.0"></script>
+</body>
+</html>

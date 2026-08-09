@@ -1,0 +1,32 @@
+# Local build configuration (copy from config.mk.example)
+config.mk
+.env
+
+# Atari client build outputs
+atari8-client/build/
+atari8-client/generated/
+atari8-client/fujirealm.xex
+atari8-client/fujirealm.atr
+atari8-client/netstream/NSENGINE.OBX
+atari8-client/netstream/NSENGINE.lst
+atari8-client/netstream/NSENGINE.lab
+atari8-client/nettest/*.xex
+atari8-client/nettest/*.lst
+
+# Lynx client build outputs
+lynx-client/build/
+lynx-client/fujirealm.lnx
+lynx-client/*.o
+lynx-client/src/*.o
+lynx-client/*.cap
+
+# Release staging
+release/
+
+# Live server state. sessions.json holds player identities
+server/sessions.json
+server/sessions.json.bak-*
+
+# Python
+__pycache__/
+*.py[cod]
