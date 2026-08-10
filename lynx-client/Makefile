@@ -1,10 +1,10 @@
 TARGET := fujirealm.lnx
 SRC := src/main.c src/bootstrap.c src/rt_state.c src/predict.c src/render.c \
-	src/blit.s src/hudtext.c src/dlgmodal.c art/lynx_art.c
+	src/blit.s src/hudtext.c src/dlgmodal.c src/nameentry.c art/lynx_art.c
 HEADERS := src/bootstrap.h src/rt_state.h src/predict.h src/render.h \
-	src/hudtext.h src/dlgmodal.h art/lynx_art.h
+	src/hudtext.h src/dlgmodal.h src/nameentry.h art/lynx_art.h
 HOST_SRC := tools/host_tests.c src/bootstrap.c src/rt_state.c src/predict.c \
-	src/hudtext.c src/dlgmodal.c art/lynx_art.c
+	src/hudtext.c src/dlgmodal.c src/nameentry.c art/lynx_art.c
 HOST_TEST := build/host_tests
 # render.c is Lynx-only, so it needs the cc65 header stubs and a couple of
 # hardware hooks redirected; see tools/host_stubs/README.md.

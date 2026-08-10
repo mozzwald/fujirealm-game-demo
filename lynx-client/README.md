@@ -92,6 +92,25 @@ lynx-client/
   Makefile             cl65 build + host tests
 ```
 
+## Picking a name
+
+The cart has no keyboard, so the player's name is entered on a slot-machine
+picker: up/down spins the slot through `A-Z 0-9`, A commits the character and
+moves on, B deletes, and A on the empty slot (`_`) starts the game. Eight
+characters maximum, uppercase only -- the 4x5 font has no lowercase, and a
+comma would break the AppKey record, which is comma-delimited.
+
+It is shown only when there is no name to use: a first boot, a cart rebuilt
+against a different `SERVER_HOST`, or a name the login server reports as
+already taken (which re-prompts up to three times, pre-filled with what was
+typed). Otherwise the name comes out of the AppKey record and the cart boots
+straight into the game without asking.
+
+The decision logic is in `src/nameentry.c` with no I/O in it, so it is
+host-tested (`tools/host_tests.c`) like the dialogue modal's; `main.c` owns
+only the screen and the joypad. The screen reuses the dialogue modal's line
+renderer and its single shared `msg_sprite`, so it costs no sprite RAM.
+
 ## What the client does
 
 After loading or creating its AppKey identity, the cart bootstraps the 32x24
@@ -216,7 +235,7 @@ command payload whose length is a single byte and into the 64-byte FujiNet
 appkey value.
 
 The cached login token is tagged with the host that issued it, stored as
-`LynxTest,<token>,<host>`. A token is only meaningful to the server that
+`<username>,<token>,<host>`. A token is only meaningful to the server that
 issued it, so a record written by a different `SERVER_HOST` is rejected and
 the cart logs in again from scratch -- otherwise switching to a local server
 would reuse the previous server's token, skip the login, and then fail to
@@ -299,7 +318,8 @@ should keep an opaque background and is not composited.
 During bootstrap, the eight boxes, left to right, are:
 
 1. ComLynx serial open.
-2. Cached AppKey loaded (yellow on a first run is expected).
+2. Cached AppKey loaded (yellow on a first run is expected -- and a first run
+   is where the name picker appears; see below).
 3. Identity token ready, from AppKey or login.
 4. Identity persisted or already cached.
 5. Realtime TCP netstream enabled.

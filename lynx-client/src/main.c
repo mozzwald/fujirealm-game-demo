@@ -9,6 +9,7 @@
 #include "predict.h"
 #include "render.h"
 #include "hudtext.h"
+#include "nameentry.h"
 
 #define SCREEN_W 160
 #define SCREEN_H 102
@@ -79,6 +80,10 @@ typedef char server_host_fits_the_wire[
 #define LOGIN_RESPONSE 0xA1
 #define NET_HELLO 0x01
 #define LOGIN_OK 0
+#define LOGIN_USERNAME_TAKEN 1
+/* Not a status the server sends: the client's own "the exchange did not
+ * happen", kept clear of the real statuses (server/protocol.py). */
+#define LOGIN_FAILED 0xFF
 /* HELLO flags byte = link profile id (server Phase 54). 1 declares the
  * ComLynx 62,500-baud line so the server paces this session for it instead
  * of the Atari default. Unknown ids fall back to the Atari profile. */
@@ -153,6 +158,10 @@ static const unsigned char boot_palette[BAR_COUNT * 2] = {
 };
 
 static unsigned char status_boxes[8];
+/* The name this cart logs in as: entered by the player on first boot, then
+ * read back out of the appkey identity record on every later one. */
+static char username[NAME_MAX + 1];
+static unsigned char username_len;
 static char token_ascii[16];
 static unsigned char token_len;
 static unsigned long token_value;
@@ -627,7 +636,12 @@ static void parse_token_value(void)
     }
 }
 
-/* Cached identity record: "LynxTest,<token>,<host>".
+/* Cached identity record: "<username>,<token>,<host>".
+ *
+ * The username is stored rather than compiled in, so the name the player
+ * picked on first boot is the name every later boot logs in as. It is read
+ * back out of the record here; a record written by a build that still hardcoded
+ * "LynxTest" parses as that name and keeps working.
  *
  * The host is part of the record because the token is only meaningful to the
  * server that issued it. Without it, pointing a cart at a different
@@ -641,18 +655,24 @@ static signed char parse_identity_value(const unsigned char *buf,
 {
     unsigned char i = 0;
     unsigned char j = 0;
-    static const char username[] = "LynxTest";
     static const char host[] = SERVER_HOST;
 
-    while (i < len && i < sizeof(username) - 1) {
-        if (buf[i] != (unsigned char)username[i]) {
+    while (i < len && buf[i] != ',') {
+        /* Same rule the server applies (protocol.py _username_bytes): printable
+           ASCII only. A record that fails it is not one we wrote, so it must
+           not be pre-filled into the picker or sent as a login. */
+        if (i >= NAME_MAX || buf[i] < 32 || buf[i] > 126) {
             return 0;
         }
+        username[i] = (char)buf[i];
         ++i;
     }
-    if (i != sizeof(username) - 1 || i >= len || buf[i++] != ',') {
+    if (i == 0 || i >= len) {
         return 0;
     }
+    username[i] = '\0';
+    username_len = i;
+    ++i; /* the comma */
     while (i < len && buf[i] >= '0' && buf[i] <= '9' && j < sizeof(token_ascii)) {
         token_ascii[j++] = (char)buf[i++];
     }
@@ -743,11 +763,11 @@ static signed char store_appkey(void)
     for (i = 1; i < sizeof(payload); ++i) {
         payload[i] = 0;
     }
-    for (i = 0; i < 8; ++i) {
-        payload[1 + i] = "LynxTest"[i];
+    len = 1;
+    for (i = 0; i < username_len; ++i) {
+        payload[len++] = (unsigned char)username[i];
     }
-    payload[9] = ',';
-    len = 10;
+    payload[len++] = ',';
     for (i = 0; i < token_len && len < sizeof(payload) - 1; ++i) {
         payload[len++] = (unsigned char)token_ascii[i];
     }
@@ -870,10 +890,13 @@ static signed char read_expected_bf_from_network(unsigned char expected_type,
     return 0;
 }
 
-static signed char login_lynx_test(void)
+/* Logs in as `username`. Returns the server's LOGIN_* status, or LOGIN_FAILED
+ * if the exchange never completed -- the caller has to tell "that name is
+ * taken, ask for another" apart from "the link is down", because only the
+ * first is worth re-prompting for. */
+static unsigned char login_with_username(void)
 {
-    static const unsigned char username[] = "LynxTest";
-    unsigned char payload[9];
+    unsigned char payload[NAME_MAX + 1];
     unsigned char frame[16];
     unsigned char frame_len;
     unsigned char response[24];
@@ -881,31 +904,37 @@ static signed char login_lynx_test(void)
     unsigned char i;
 
     if (!network_open_login()) {
-        return 0;
+        return LOGIN_FAILED;
     }
-    payload[0] = sizeof(username) - 1;
-    for (i = 0; i < sizeof(username) - 1; ++i) {
-        payload[i + 1] = username[i];
+    payload[0] = username_len;
+    for (i = 0; i < username_len; ++i) {
+        payload[i + 1] = (unsigned char)username[i];
     }
-    build_bf_packet(LOGIN_REQUEST, payload, sizeof(username), frame, &frame_len);
+    build_bf_packet(LOGIN_REQUEST, payload, username_len + 1, frame, &frame_len);
     if (!network_write(frame, frame_len)) {
         network_close();
-        return 0;
+        return LOGIN_FAILED;
     }
     if (!read_expected_bf_from_network(LOGIN_RESPONSE, response, &response_len)) {
         network_close();
-        return 0;
+        return LOGIN_FAILED;
     }
     network_close();
-    if (response_len < 2 || response[0] != LOGIN_OK || response[1] > sizeof(token_ascii)) {
-        return 0;
+    if (response_len < 2) {
+        return LOGIN_FAILED;
+    }
+    if (response[0] != LOGIN_OK) {
+        return response[0];
+    }
+    if (response[1] > sizeof(token_ascii)) {
+        return LOGIN_FAILED;
     }
     token_len = response[1];
     for (i = 0; i < token_len; ++i) {
         token_ascii[i] = (char)response[i + 2];
     }
     parse_token_value();
-    return token_value != 0;
+    return token_value != 0 ? LOGIN_OK : LOGIN_FAILED;
 }
 
 static signed char enable_realtime_netstream(void)
@@ -2482,6 +2511,87 @@ static void game_loop(void)
     }
 }
 
+/* ------------------------------------------------------------------------- */
+/* Name entry.
+ *
+ * Shown only when there is no usable cached identity -- a first boot, a cart
+ * rebuilt against a different SERVER_HOST, or a name the server says is taken.
+ * Everything it decides lives in nameentry.c and is host-tested; this is the
+ * screen and the joypad around it.
+ *
+ * It borrows the dialogue modal's line renderer, so it costs no sprite of its
+ * own: the same msg_sprite is rasterized and blitted per line. */
+
+/* The picker takes the pad mask straight from joy_read(), so its button bits
+ * have to be the driver's. If that ever stops being true, fail here rather
+ * than on hardware -- there is no Lynx emulator to catch it in between. */
+typedef char name_btn_layout_check[
+    (NAME_BTN_UP == JOY_UP_MASK && NAME_BTN_DOWN == JOY_DOWN_MASK &&
+     NAME_BTN_A == JOY_BTN_A_MASK && NAME_BTN_B == JOY_BTN_B_MASK &&
+     NAME_BTN_MASK == (JOY_UP_MASK | JOY_DOWN_MASK |
+                       JOY_BTN_A_MASK | JOY_BTN_B_MASK)) ? 1 : -1];
+
+#define NAME_PROMPT_Y 16
+#define NAME_VALUE_Y 34
+#define NAME_HELP_Y 60
+#define NAME_TAKEN_Y 84
+
+static void name_draw_line(const char *text, unsigned char ink, signed int y)
+{
+    unsigned char len = 0;
+    while (text[len] != 0) {
+        ++len;
+    }
+    dialogue_draw_line(text, len, ink, y);
+}
+
+static void prompt_for_name(unsigned char taken)
+{
+    char line[NAME_MAX + 2];
+    unsigned char poll;
+    /* Both alternating pages owe a repaint after every change, or the flip
+       shows the previous character half the time. */
+    unsigned char pages_owed = 2;
+
+    /* Seed with whatever name we know: a rebuild against a new server, or a
+       name the server refused, should not make the player type it all again. */
+    name_entry_init(username);
+
+    for (;;) {
+        if (pages_owed != 0) {
+            --pages_owed;
+            render_modal_begin();
+            name_draw_line("ENTER YOUR NAME", DLG_INK_SPEAKER, NAME_PROMPT_Y);
+            name_entry_display(line);
+            name_draw_line(line, DLG_INK_BODY, NAME_VALUE_Y);
+            name_draw_line("UP DOWN PICKS  A ADDS  B DELS",
+                           DLG_INK_PROMPT, NAME_HELP_Y);
+            name_draw_line("A ON _ STARTS",
+                           DLG_INK_PROMPT, NAME_HELP_Y + DLG_LINE_PITCH);
+            if (taken) {
+                name_draw_line("NAME TAKEN - PICK ANOTHER",
+                               DLG_INK_PROMPT, NAME_TAKEN_Y);
+            }
+            render_modal_end();
+        }
+
+        /* NAME_BTN_* are the JOY_*_MASK bits, so the pad byte goes straight
+           in; see nameentry.h. */
+        poll = name_entry_poll(joy_read(0));
+        if (poll == NAME_POLL_DONE) {
+            break;
+        }
+        if (poll == NAME_POLL_CHANGED) {
+            pages_owed = 2;
+        }
+    }
+
+    for (username_len = 0; username_len < name_state.len; ++username_len) {
+        username[username_len] = name_state.buf[username_len];
+    }
+    username[username_len] = '\0';
+}
+
 static void run_client(void)
 {
     if (!open_serial()) {
@@ -2495,8 +2605,28 @@ static void run_client(void)
         set_status(2, STATUS_OK);
         set_status(3, STATUS_OK);
     } else {
+        unsigned char status;
+        unsigned char taken = 0;
+        unsigned char attempts = 3;
+
         set_status(1, STATUS_FAIL);
-        if (!login_lynx_test()) {
+        /* render_init() has to run before anything can be drawn as sprites;
+           game_loop calls it again later, which only re-clears the pages. */
+        render_init();
+        hud_text_init(msg_sprite);
+        for (;;) {
+            prompt_for_name(taken);
+            status = login_with_username();
+            if (status != LOGIN_USERNAME_TAKEN || --attempts == 0) {
+                break;
+            }
+            /* Only a taken name is worth asking again for; a dead link would
+               otherwise trap the player in the picker forever. */
+            taken = 1;
+        }
+        /* The picker owned the screen; put the status boxes back. */
+        draw_boot_pattern();
+        if (status != LOGIN_OK) {
             set_status(2, STATUS_FAIL);
             return;
         }

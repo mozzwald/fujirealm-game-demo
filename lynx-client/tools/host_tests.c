@@ -5,6 +5,7 @@
 #include "bootstrap.h"
 #include "dlgmodal.h"
 #include "hudtext.h"
+#include "nameentry.h"
 #include "predict.h"
 #include "render.h"
 #include "rt_state.h"
@@ -89,10 +90,11 @@ static signed char feed_frame(struct bf_parser *parser,
 
 static void test_login_request(void)
 {
+    /* An eight-character name, the longest the picker can produce. */
     const unsigned char expected[] = {
         0xBF, 0x01, 0xA0, 0x09, 0x08,
-        'L', 'y', 'n', 'x', 'T', 'e', 's', 't',
-        0xBC
+        'P', 'L', 'A', 'Y', 'E', 'R', '0', '1',
+        0x9F
     };
     assert(sum8(expected, sizeof(expected) - 1) == expected[sizeof(expected) - 1]);
 }
@@ -1652,6 +1654,131 @@ static void test_dlg_modal_page_resend_is_not_a_redraw(void)
     assert(modal.waiting == 1);
 }
 
+static void test_name_entry_cycle_and_commit(void)
+{
+    char line[NAME_MAX + 2];
+
+    name_entry_init(0);
+    assert(name_state.len == 0 && name_state.pick == 0);
+    assert(name_entry_display(line) == 1 && strcmp(line, "_") == 0);
+
+    /* A on the empty slot with an empty name is not an accept: it would log in
+       as "", which the server rejects with a bad-username packet error. */
+    assert(name_entry_step(NAME_BTN_A) == 0);
+    assert(name_state.len == 0);
+
+    /* Up walks forward from the empty slot into 'A'; down from 0 wraps to the
+       last digit rather than underflowing the index. */
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_entry_display(line) == 1 && strcmp(line, "A") == 0);
+    assert(name_entry_step(NAME_BTN_DOWN) == 0);
+    assert(name_state.pick == 0);
+    assert(name_entry_step(NAME_BTN_DOWN) == 0);
+    assert(name_entry_display(line) == 1 && strcmp(line, "9") == 0);
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_state.pick == 0);
+
+    /* Commit 'A' and 'B'; each commit parks the cursor back on the empty
+       slot, so the display shows the name plus the placeholder. */
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_entry_step(NAME_BTN_A) == 0);
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_entry_step(NAME_BTN_A) == 0);
+    assert(name_state.len == 2 && strcmp(name_state.buf, "AB") == 0 && name_state.pick == 0);
+    assert(name_entry_display(line) == 3 && strcmp(line, "AB_") == 0);
+
+    /* A on the empty slot with a name accepts it. */
+    assert(name_entry_step(NAME_BTN_A) == 1);
+    assert(strcmp(name_state.buf, "AB") == 0);
+}
+
+static void test_name_entry_backspace_and_full(void)
+{
+    char line[NAME_MAX + 2];
+    unsigned char i;
+
+    name_entry_init("ZZ");
+    assert(name_state.len == 2 && strcmp(name_state.buf, "ZZ") == 0);
+
+    /* B abandons a pending pick before it eats a committed character. */
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_state.pick == 1);
+    assert(name_entry_step(NAME_BTN_B) == 0);
+    assert(name_state.pick == 0 && name_state.len == 2);
+    assert(name_entry_step(NAME_BTN_B) == 0);
+    assert(name_state.len == 1 && strcmp(name_state.buf, "Z") == 0);
+    assert(name_entry_step(NAME_BTN_B) == 0);
+    assert(name_state.len == 0 && name_state.buf[0] == '\0');
+    /* Backspace at zero is a no-op, not an underflow. */
+    assert(name_entry_step(NAME_BTN_B) == 0);
+    assert(name_state.len == 0);
+
+    /* Fill the name. At NAME_MAX the wheel is frozen and the placeholder
+       disappears, leaving only accept and backspace. */
+    name_entry_init("ABCDEFG");
+    assert(name_entry_step(NAME_BTN_UP) == 0);
+    assert(name_entry_step(NAME_BTN_A) == 0);
+    assert(name_state.len == NAME_MAX && strcmp(name_state.buf, "ABCDEFGA") == 0);
+    for (i = 0; i < 4; ++i) {
+        assert(name_entry_step(NAME_BTN_UP | NAME_BTN_DOWN) == 0);
+        assert(name_state.pick == 0);
+    }
+    assert(name_entry_display(line) == NAME_MAX &&
+           strcmp(line, "ABCDEFGA") == 0);
+    assert(name_entry_step(NAME_BTN_A) == 1);
+
+    /* A longer stored name (an appkey record from an older build) is
+       truncated rather than overrunning the buffer. */
+    name_entry_init("TOOLONGNAME");
+    assert(name_state.len == NAME_MAX && strcmp(name_state.buf, "TOOLONGN") == 0);
+}
+
+/* The screen drives the picker through name_entry_poll() and nothing else, so
+ * this is the test that stands in for the hardware. The first version of the
+ * screen latched in main.c instead and shipped with a dead D-pad. */
+static void test_name_entry_poll_edges(void)
+{
+    char line[NAME_MAX + 2];
+
+    name_entry_init(0);
+
+    /* Every button is a rising edge, including the D-pad -- the whole mask
+       has to survive the latch, not just the two action bits. */
+    assert(name_entry_poll(NAME_BTN_UP) == NAME_POLL_CHANGED);
+    assert(name_state.pick == 1);
+    /* Held is not pressed: one spin per press, or a light touch runs the
+       wheel off the end. */
+    assert(name_entry_poll(NAME_BTN_UP) == NAME_POLL_IDLE);
+    assert(name_state.pick == 1);
+    assert(name_entry_poll(0) == NAME_POLL_IDLE);
+    assert(name_entry_poll(NAME_BTN_UP) == NAME_POLL_CHANGED);
+    assert(name_state.pick == 2);
+
+    /* Rolling from the D-pad onto a button without releasing first still
+       registers, and the direction still held alongside it does not fire
+       again: the latch tracks the mask per bit, not "something is down". */
+    assert(name_entry_poll(NAME_BTN_UP | NAME_BTN_A) == NAME_POLL_CHANGED);
+    assert(name_state.len == 1 && name_state.buf[0] == 'B');
+    assert(name_entry_poll(NAME_BTN_UP | NAME_BTN_B) == NAME_POLL_CHANGED);
+    assert(name_state.len == 0);
+
+    /* Bits outside the pad mask are ignored rather than read as buttons. */
+    assert(name_entry_poll((unsigned char)~NAME_BTN_MASK) == NAME_POLL_IDLE);
+
+    /* Accepting reports DONE, not CHANGED, so the screen exits. */
+    assert(name_entry_poll(NAME_BTN_UP) == NAME_POLL_CHANGED);
+    assert(name_entry_poll(NAME_BTN_UP | NAME_BTN_A) == NAME_POLL_CHANGED);
+    assert(name_entry_display(line) == 2 && strcmp(line, "A_") == 0);
+    assert(name_entry_poll(0) == NAME_POLL_IDLE);
+    assert(name_entry_poll(NAME_BTN_A) == NAME_POLL_DONE);
+    assert(strcmp(name_state.buf, "A") == 0);
+
+    /* A fresh screen must not inherit the button that left the last one. */
+    name_entry_init("A");
+    assert(name_state.held == 0);
+}
+
 int main(void)
 {
     test_login_request();
@@ -1685,6 +1812,9 @@ int main(void)
     test_dlg_modal_pages_and_acks();
     test_dlg_modal_last_page_and_decline();
     test_dlg_modal_page_resend_is_not_a_redraw();
+    test_name_entry_cycle_and_commit();
+    test_name_entry_backspace_and_full();
+    test_name_entry_poll_edges();
     puts("host client tests: ok");
     return 0;
 }
