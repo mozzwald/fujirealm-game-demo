@@ -13,7 +13,7 @@ MAKEOVERRIDES_PASS = SERVER_HOST=$(SERVER_HOST) \
 	HYBRID_SERVER_PORT=$(HYBRID_SERVER_PORT) LOGIN_SERVER_PORT=$(LOGIN_SERVER_PORT)
 
 .PHONY: all atari lynx atr nettest clean test test-server test-tools test-lynx \
-	test-editor run-server run-login-server run-smoke-server run-bootstrap-server
+	test-intv test-editor run-server run-login-server run-smoke-server run-bootstrap-server
 
 all: atari lynx
 
@@ -35,7 +35,7 @@ clean:
 
 # --- tests ------------------------------------------------------------------
 
-test: test-server test-tools test-lynx
+test: test-server test-tools test-lynx test-intv
 
 test-server:
 	python3 -m unittest discover -s server/tests -p 'test_*.py'
@@ -48,9 +48,14 @@ test-tools: atari
 test-lynx:
 	$(MAKE) -C lynx-client test
 
+# Just the art check: building the client itself needs intybasic + as1600, which
+# the rest of the suite does not, so this stays runnable everywhere.
+test-intv:
+	$(MAKE) -C intv-client check-art
+
 # Needs node. The rest of the suite does not.
 test-editor:
-	cd tools/tile-editor && node --test tile-model.test.js lynx-model.test.js
+	cd tools/tile-editor && node --test tile-model.test.js lynx-model.test.js intv-model.test.js
 
 # --- servers ----------------------------------------------------------------
 

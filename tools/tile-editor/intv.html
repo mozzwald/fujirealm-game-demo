@@ -3,28 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FujiRealm Lynx Tile Editor</title>
+    <title>FujiRealm Intellivision Card Editor</title>
     <link rel="stylesheet" href="icons.css">
-    <link rel="stylesheet" href="style.css?v=4.1.0">
+    <link rel="stylesheet" href="style.css?v=4.2.0">
 </head>
 <body>
-    <input type="file" id="tileset-input" accept=".json" hidden>
+    <input type="file" id="project-input" accept=".json" hidden>
 
     <header class="app-header">
         <div class="brand-block">
             <strong>FujiRealm</strong>
-            <span>Lynx Tile Editor</span>
+            <span>Intellivision Card Editor</span>
             <span id="dirty-indicator" class="dirty-indicator" hidden>Modified</span>
         </div>
-        <nav class="header-actions" aria-label="Tileset actions">
-            <button id="load-tileset" class="button primary"><i class="bi bi-folder2-open"></i> Load Tileset</button>
-            <button id="save-tileset" class="button"><i class="bi bi-floppy"></i> Save Tileset</button>
+        <nav class="header-actions" aria-label="Project actions">
+            <button id="load-project" class="button primary"><i class="bi bi-folder2-open"></i> Load Cards</button>
+            <button id="save-project" class="button"><i class="bi bi-floppy"></i> Save Cards</button>
+            <span class="divider"></span>
+            <button id="import-bitmap" class="icon-button" title="Import BITMAP text into this card" aria-label="Import BITMAP"><i class="bi bi-file-earmark-arrow-up"></i></button>
+            <button id="export-bitmap" class="icon-button" title="Copy BITMAP text out" aria-label="Copy BITMAP"><i class="bi bi-file-earmark-arrow-down"></i></button>
             <span class="divider"></span>
             <button id="undo" class="icon-button" title="Undo" aria-label="Undo" disabled><i class="bi bi-arrow-counterclockwise"></i></button>
             <button id="redo" class="icon-button" title="Redo" aria-label="Redo" disabled><i class="bi bi-arrow-clockwise"></i></button>
             <span class="divider"></span>
             <a class="button" href="index.html" title="Atari ANTIC 4 editor"><i class="bi bi-arrow-left-right"></i> Atari</a>
-            <a class="button" href="intv.html" title="Intellivision GRAM card editor"><i class="bi bi-arrow-left-right"></i> Intellivision</a>
+            <a class="button" href="lynx.html" title="Lynx 8x8 tile editor"><i class="bi bi-arrow-left-right"></i> Lynx</a>
         </nav>
     </header>
 
@@ -32,18 +35,21 @@
         <aside class="left-rail">
             <section class="panel palette-panel">
                 <header>
-                    <span>Lynx CLUT</span>
-                    <span id="active-pen-label" class="mono">$0</span>
+                    <span>Card colour</span>
+                    <span id="active-color-label" class="mono"></span>
                 </header>
                 <div id="palette" class="palette lynx-palette"></div>
-                <div class="usage-list">Pen 0 is transparent on entity sprites; keep it black.</div>
+                <div class="usage-list">
+                    One STIC colour per card &mdash; there is no per-pixel colour.
+                    The background is always black, so colour 0 is not selectable.
+                </div>
             </section>
 
             <section class="panel">
                 <header>Neighbours</header>
                 <div class="lynx-preview-body">
                     <canvas id="tiled-canvas" width="192" height="192"></canvas>
-                    <p class="muted">Same tile 3&times;3 at 8&times;, for checking seams.</p>
+                    <p class="muted">Same card 3&times;3 at 8&times;, for checking seams.</p>
                 </div>
             </section>
 
@@ -51,7 +57,8 @@
                 <header>Actual size</header>
                 <div class="lynx-preview-body">
                     <canvas id="actual-canvas" width="8" height="8"></canvas>
-                    <span id="sprite-cost" class="muted mono"></span>
+                    <span id="card-word" class="muted mono"></span>
+                    <span id="gram-budget" class="muted mono"></span>
                 </div>
             </section>
         </aside>
@@ -59,7 +66,7 @@
         <section class="panel tile-workspace">
             <header class="tile-header">
                 <div>
-                    <span id="entry-name">No tileset loaded</span>
+                    <span id="entry-name">No cards loaded</span>
                     <span id="entry-binding" class="binding"></span>
                 </div>
                 <div class="tool-row">
@@ -69,39 +76,56 @@
                     <button data-transform="right" class="icon-button" title="Shift right"><i class="bi bi-caret-right-fill"></i></button>
                     <button data-transform="mirror-h" class="icon-button" title="Mirror horizontally"><i class="bi bi-arrow-left-right"></i></button>
                     <button data-transform="mirror-v" class="icon-button" title="Mirror vertically"><i class="bi bi-arrow-down-up"></i></button>
-                    <button data-transform="clear" class="icon-button danger" title="Clear to pen 0"><i class="bi bi-eraser"></i></button>
+                    <button data-transform="invert" class="icon-button" title="Invert"><i class="bi bi-circle-half"></i></button>
+                    <button data-transform="clear" class="icon-button danger" title="Clear"><i class="bi bi-eraser"></i></button>
                 </div>
             </header>
             <div class="tile-stage">
                 <canvas id="editor-canvas" width="512" height="512"></canvas>
                 <div id="empty-state" class="empty-state">
                     <i class="bi bi-grid-3x3" style="font-size:32px"></i>
-                    <span>Load <code>lynx_tileset.json</code> to begin</span>
+                    <span>Load <code>intv_cards.json</code> to begin</span>
                 </div>
             </div>
             <div class="quadrant-bar">
-                <span class="muted">Left click paints the selected pen. Right click picks the pen under the cursor.</span>
+                <span class="muted">Left click sets a pixel, right click clears it. Space inverts the card.</span>
             </div>
         </section>
 
         <aside class="panel library-panel">
-            <header>Tile Library</header>
+            <header>Card Library</header>
             <div class="library-controls">
                 <input id="library-filter" type="search" placeholder="Filter by name" class="filter-input">
                 <select id="library-kind" class="filter-input">
                     <option value="all">All</option>
-                    <option value="tile">Terrain tiles</option>
+                    <option value="tile">Terrain &amp; entities</option>
                     <option value="player">Player frames</option>
-                    <option value="entity">Entity sprites</option>
+                    <option value="item">Items</option>
+                    <option value="hud">HUD glyphs</option>
                 </select>
-                <label class="toggle-control">
-                    <input type="checkbox" id="show-unused">
-                    Show unused (Atari legacy) tiles
-                </label>
             </div>
             <div id="tile-list" class="tile-list"></div>
         </aside>
     </main>
+
+    <dialog id="bitmap-dialog" class="bitmap-dialog">
+        <form method="dialog">
+            <h2 id="bitmap-title">BITMAP</h2>
+            <p id="bitmap-hint" class="muted"></p>
+            <textarea id="bitmap-text" spellcheck="false" rows="12"></textarea>
+            <menu>
+                <button value="cancel" class="button">Close</button>
+                <button id="bitmap-apply" value="apply" class="button primary">Apply</button>
+            </menu>
+        </form>
+    </dialog>
+
+    <dialog id="message-dialog" class="message-dialog">
+        <form method="dialog">
+            <p id="message-text"></p>
+            <menu><button value="ok" class="button primary">OK</button></menu>
+        </form>
+    </dialog>
 
     <footer class="page-credit">
         FujiRealm Tile Editor &mdash; built on
@@ -109,7 +133,7 @@
         by the 4Coloreditor Team, used with their kind permission. Thank you!
     </footer>
 
-    <script src="lynx-model.js"></script>
-    <script src="lynx.js?v=1.0.0"></script>
+    <script src="intv-model.js"></script>
+    <script src="intv.js?v=1.0.0"></script>
 </body>
 </html>

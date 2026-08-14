@@ -167,7 +167,26 @@ dialog .button { float: right; }
 #editor-canvas { image-rendering: pixelated; max-width: 100%; max-height: 100%; cursor: crosshair; }
 .filter-input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: #20252a; color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
 
-/* Attribution line shown at the bottom of both editor pages. */
+/* -------------------------------------------------- Intellivision editor
+   Cards are 1bpp with one STIC colour each, so the palette selects the card's
+   colour rather than a pen: the active swatch is the card's colour, and black
+   is shown disabled because it is the background. Everything else reuses the
+   Lynx furniture above. */
+.palette .swatch:disabled { cursor: not-allowed; opacity: 0.45; }
+.palette .swatch:disabled:hover { border-color: var(--border); }
+
+.bitmap-dialog { background: var(--panel, #191d21); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 16px; max-width: min(520px, 92vw); }
+.bitmap-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.bitmap-dialog h2 { margin: 0 0 4px; font-size: 14px; }
+.bitmap-dialog p { margin: 0 0 10px; font-size: 12px; }
+.bitmap-dialog textarea {
+    width: 100%; box-sizing: border-box; resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.35;
+    background: #14181c; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 8px;
+}
+.bitmap-dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0 0; padding: 0; }
+
+/* Attribution line shown at the bottom of the editor pages. */
 .page-credit {
     padding: 12px 16px 20px;
     text-align: center;

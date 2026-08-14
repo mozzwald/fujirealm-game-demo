@@ -7,8 +7,9 @@ with no build step and no server: open the `.html` file directly.
 | --- | --- | --- |
 | `index.html` | `atari8-client/art/fujirealm_charsetter.json` | the Atari 8-bit ANTIC 4 tiles |
 | `lynx.html` | `lynx-client/art/lynx_tileset.json` | the Atari Lynx 8x8 sprites |
+| `intv.html` | `intv-client/art/intv_cards.json` | the Intellivision GRAM cards |
 
-The two are linked from each other's headers.
+Each is linked from the others' headers.
 
 ## Atari editor (`index.html`)
 
@@ -72,6 +73,47 @@ The logical tile ids are shared with the Atari client and the server's terrain
 stream; the id contract is `docs/TILE_ALLOCATION.md`, and the array index in
 this file *is* the server's tile id.
 
+## Intellivision editor (`intv.html`)
+
+The most constrained of the three. A GRAM card is 8x8 and **1bpp** — there is no
+per-pixel colour at all. The screen runs in colour-stack mode with every entry
+black, so the background is always black and each BACKTAB word carries one STIC
+colour for the whole cell. A card is therefore a shape plus a single colour, and
+that is exactly what the editor gives you.
+
+Load `intv-client/art/intv_cards.json`. It holds the 40 cards: 35 terrain and
+entity cards (one per streamed tile id), three player frames, the potion, and the
+HUD heart.
+
+- Left click sets a pixel, right click clears it, space inverts the card.
+- The palette selects the **card's** colour, not a pen. Colour 0 is disabled
+  because it is the background — a card painted in it would be invisible.
+- The actual-size panel shows the BACKTAB word the card compiles to and the GRAM
+  budget (40 of the STIC's 64 cards are in use).
+- The neighbours panel repeats the card 3x3 for checking terrain seams.
+- The two file icons import and export IntyBASIC `BITMAP "…"` text, so a card can
+  be pasted straight in from — or out to — `gfx.bas` or any other IntyBASIC
+  source. Import also accepts bare rows and `1`/`0` notation.
+
+Because one colour has to carry a whole cell, the useful moves here are different
+from the other two editors: silhouette and internal contrast do all the work, and
+a shape that reads at 8x8 in a single colour usually wants *fewer* set pixels
+than the derived art has.
+
+Saving downloads the JSON. Drop it back over the file and rebuild:
+
+```sh
+make -C intv-client art     # regenerate gfx.bas
+```
+
+`make -C intv-client check-art` verifies the checked-in `gfx.bas` is current with
+the art, so a forgotten `make art` fails rather than shipping stale cards.
+
+The `bindings` block (which card draws which tile, entity species, item drops)
+is runtime metadata owned by `intv-client/tools/intv_cards.py`: the editor shows
+it and both the browser and the generator reject a file that edits it. Pixels and
+colours are what you change.
+
 ## Tests
 
 The pixel/model layer is unit tested and needs only node:
@@ -79,7 +121,10 @@ The pixel/model layer is unit tested and needs only node:
 ```sh
 node --test tile-model.test.js
 node --test lynx-model.test.js
+node --test intv-model.test.js
 ```
+
+Or `make test-editor` from the repo root, which runs all three.
 
 ## Offline use
 

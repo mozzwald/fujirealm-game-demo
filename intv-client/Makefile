@@ -26,9 +26,22 @@ SOURCES = fujirealm.bas frconst.bas vars.bas fujinet.bas server_cfg.bas crc_tab.
           gfx.bas testmap.bas rt.bas bootstrap.bas cache.bas state.bas \
           render.bas input.bas login.bas sound.bas
 
-.PHONY: all clean run
+.PHONY: all art check-art clean run
 
 all: $(PRODUCT).bin $(PRODUCT).rom
+
+# GRAM cards + color tables, compiled from the art project that
+# tools/tile-editor/intv.html edits. gfx.bas is in SOURCES, so a build after an
+# art edit regenerates it and relinks on its own.
+gfx.bas: art/intv_cards.json tools/gen_gfx.py tools/intv_cards.py
+	python3 tools/gen_gfx.py > $@
+
+art: gfx.bas
+
+# Deliberately no gfx.bas prerequisite: this asks whether the *committed*
+# gfx.bas matches the committed art, so rebuilding it first would defeat it.
+check-art:
+	@python3 tools/gen_gfx.py --check
 
 # Endpoint DATA tables; regenerated whenever config.mk (if present) or the
 # generator changes, so a host change always relinks.

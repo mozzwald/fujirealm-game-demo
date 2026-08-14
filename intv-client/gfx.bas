@@ -1,6 +1,6 @@
-' gfx.bas -- GRAM cards + color tables (GENERATED FILE, hand-tweakable via
-' tools/convert_tiles.py OVERRIDES; regenerate: python3 tools/convert_tiles.py > gfx.bas)
-' Source art: lynx-client/art/lynx_tileset.json. 40 GRAM cards used.
+' gfx.bas -- GRAM cards + color tables (GENERATED FILE, edit the art in
+' tools/tile-editor/intv.html; regenerate: make art, or python3 tools/gen_gfx.py > gfx.bas)
+' Source art: art/intv_cards.json. 40 of 64 GRAM cards used.
 
 ' gfx_init: one-time GRAM load. Each DEFINE takes effect on the next video
 ' frame, so every DEFINE is followed by WAIT (max 16 cards per DEFINE).

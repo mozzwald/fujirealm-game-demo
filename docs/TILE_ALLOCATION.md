@@ -2,6 +2,8 @@
 
 The canonical editable source is `atari8-client/art/fujirealm_charsetter.json`; runtime tables are generated from that project.
 
+The logical tile IDs below are a shared contract, but each client owns its own art, because the hardware differs too much to share pixels: `lynx-client/art/lynx_tileset.json` holds 8x8 4bpp sprites, and `intv-client/art/intv_cards.json` holds 8x8 1bpp GRAM cards with one STIC colour each. All three are edited in `tools/tile-editor/`. The Intellivision draws only the 35 IDs the terrain stream actually uses — IDs 1 and 18-33 are dead legacy slots and have no card.
+
 ## Logical tile IDs
 
 | ID    | Name                               | Character codes (TL, TR, BL, BR) | Ownership                                                 |

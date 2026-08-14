@@ -30,9 +30,9 @@ top side button = attack (aim follows the disc, diagonals included), lower
 side buttons = interact/pick up/advance dialogue, keypad 5 = PvP toggle,
 keypad 9 = diagnostics line, Clear = decline dialogue.
 
-Art is converted from the Lynx tileset (`lynx-client/art/lynx_tileset.json`)
-to 1bpp + one STIC color per card by `tools/convert_tiles.py` — see
-"Regenerating" below.
+Art is 40 GRAM cards in `art/intv_cards.json`, drawn at 1bpp with one STIC
+color each in `tools/tile-editor/intv.html` and compiled to `gfx.bas` by
+`tools/gen_gfx.py` — see "Art" below.
 
 ## Build
 
@@ -129,17 +129,43 @@ at a different server forces a fresh login.
 ## Regenerating the generated files
 
 ```sh
+make art                                        # art/intv_cards.json -> gfx.bas
+make check-art                                  # fail if gfx.bas is stale
 python3 tools/gen_crc.py > crc_tab.bas          # CRC-16 tables (self-testing)
-python3 tools/convert_tiles.py > gfx.bas        # Lynx art -> GRAM cards
-python3 tools/convert_tiles.py --preview        # ASCII proofs to stderr
 python3 tools/gen_testmap.py > testmap.bas      # offline demo terrain
 ```
 
-`convert_tiles.py` reduces each 16-color Lynx tile to a 1bpp mask + one
-STIC color: full-coverage terrain by luminance threshold, objects by
-corner-sampled background removal. Hand overrides (color forcing, mask
-inversion, fully hand-drawn cards) live in `OVERRIDES`/`HAND_TILES` at the
-top of the script — tweak there, not in `gfx.bas`.
+`gfx.bas` is a real make dependency of the build, so editing the art and
+running `make` is enough; `check-art` runs from the repo root as part of
+`make test`.
+
+### Art
+
+The source of truth is **`art/intv_cards.json`**, edited in the browser at
+`tools/tile-editor/intv.html` (see that directory's README). It holds the 40
+GRAM cards as 8x8 1bpp bitmaps plus one STIC color each, which is the whole
+color model here: the screen is in color-stack mode with every entry black,
+so the background is always black and the BACKTAB word carries the cell's
+foreground color. That is also why the three player cards are reused for
+remote players — only the word's color changes.
+
+`tools/gen_gfx.py` compiles the project to `gfx.bas`; `tools/intv_cards.py`
+holds the schema, the runtime bindings (tile id -> card, entity species,
+item drops) and the word encoder, and is the Python twin of the editor's
+`intv-model.js`. Bindings are generated metadata: both sides refuse a
+project file that edits them.
+
+`tools/convert_tiles.py` is the **bootstrap** that produced the first
+version of the JSON by reducing each 16-color Lynx tile to a 1bpp mask plus
+a color — terrain by luminance threshold, objects by corner-sampled
+background removal, with hand corrections in `OVERRIDES`/`HAND_TILES`. It is
+no longer part of the build, and `--seed` overwrites hand-drawn art with the
+derived version, so run it only to start over:
+
+```sh
+python3 tools/convert_tiles.py --preview        # ASCII proofs to stderr
+python3 tools/convert_tiles.py --seed           # DISCARDS hand-drawn art
+```
 
 ## Status / not yet done
 
