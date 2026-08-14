@@ -1,0 +1,7 @@
+*.asm
+*.bin
+*.cfg
+*.rom
+*.lst
+config.mk
+server_cfg.bas
