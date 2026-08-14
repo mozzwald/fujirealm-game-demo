@@ -33,14 +33,21 @@ rn_full: PROCEDURE
 END
 
 ' ---------------------------------------------------------------------------
-' rn_restore: repaint just the cells objects covered last frame.
+' rn_restore: repaint just the cells objects covered last frame. The shadow
+' list lives in cart RAM (SHDBUF) -- 21 worst-case entries (player + 6
+' entities + 4 remotes + 4 items + 6 tracer cells) outgrew the variable
+' pool.
 ' ---------------------------------------------------------------------------
 rn_restore: PROCEDURE
     IF shd_n = 0 THEN RETURN
     FOR sp_i = 0 TO shd_n - 1
-        #t1 = TERR + row_tab(row_base + cam_y + shd_row(sp_i))
-        #t0 = PEEK(#t1 + ((cam_x + shd_col(sp_i) + col_off) AND 31)) AND 255
-        #BACKTAB(mul20(shd_row(sp_i)) + shd_col(sp_i)) = tile_word(#t0)
+        #t0 = PEEK(SHDBUF + sp_i * 2) AND 255
+        rm_i = #t0                                  ' col
+        #t0 = PEEK(SHDBUF + sp_i * 2 + 1) AND 255
+        rm_ch = #t0                                 ' row
+        #t1 = TERR + row_tab(row_base + cam_y + rm_ch)
+        #t0 = PEEK(#t1 + ((cam_x + rm_i + col_off) AND 31)) AND 255
+        #BACKTAB(mul20(rm_ch) + rm_i) = tile_word(#t0)
     NEXT sp_i
     shd_n = 0
 END
@@ -56,9 +63,9 @@ rn_put: PROCEDURE
     sp_y = sp_y - org_y - cam_y
     IF sp_y >= VIEW_ROWS THEN RETURN
     #BACKTAB(mul20(sp_y) + sp_x) = #sp_w
-    IF shd_n < 15 THEN
-        shd_col(shd_n) = sp_x
-        shd_row(shd_n) = sp_y
+    IF shd_n < 21 THEN
+        POKE SHDBUF + shd_n * 2, sp_x
+        POKE SHDBUF + shd_n * 2 + 1, sp_y
         shd_n = shd_n + 1
     END IF
 END
@@ -70,6 +77,31 @@ END
 ' ---------------------------------------------------------------------------
 rn_stamp_all: PROCEDURE
     anim = (FRAME AND 16) / 16
+
+    ' Shot tracer first (under everything, so a hit enemy's white flash
+    ' stays visible): bullet cards along the path ig_poll computed, for a
+    ' few frames. Cells auto-restore through the shadow list when it fades.
+    IF trc_ttl > 0 THEN
+        trc_ttl = trc_ttl - 1
+        #t1 = PEEK(TRCBUF + 3) AND 255              ' path length
+        IF #t1 > 0 THEN
+            #t0 = PEEK(TRCBUF) AND 255
+            sw_x = #t0                              ' walk from the muzzle
+            #t0 = PEEK(TRCBUF + 1) AND 255
+            sw_y = #t0
+            #t0 = PEEK(TRCBUF + 2) AND 255
+            rf_c = #t0                              ' direction
+            rf_c0 = #t1
+            #sp_w = tile_word(6)
+            FOR rf_r = 1 TO rf_c0
+                sw_x = sw_x + dx_tab(rf_c)
+                sw_y = sw_y + dy_tab(rf_c)
+                sp_x = sw_x
+                sp_y = sw_y
+                GOSUB rn_put
+            NEXT rf_r
+        END IF
+    END IF
 
     IF itm_n > 0 THEN
         FOR sp_i = 0 TO itm_n - 1

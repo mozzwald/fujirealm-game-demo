@@ -44,7 +44,8 @@
 ' --- renderer (render.bas)
     DIM cam_x, cam_y
     DIM repaint_full, hud_dirty
-    DIM shd_col(15), shd_row(15), shd_n
+    DIM shd_n                   ' entries in SHDBUF (list itself is cart RAM)
+    DIM trc_ttl, trc_i          ' shot tracer frames remaining / path temp
     DIM rf_r, rf_c, rf_c0, rf_dst
     DIM sp_x, sp_y, sp_i
     DIM #sp_w

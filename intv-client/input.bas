@@ -40,6 +40,9 @@ ig_poll: PROCEDURE
     ELSEIF CONT.RIGHT THEN
         ig_dir = 3
     END IF
+    ' aim follows the disc exactly, diagonals included, before the fire
+    ' latch below reads it -- a turn and a shot in the same frame aim right
+    IF ig_dir <> 255 THEN aim = ig_dir
 
     ' Side buttons: top = fire, either bottom = interact/pickup. Latched so
     ' a held button fires once; the counters ride the next PLAYER_STATE.
@@ -49,6 +52,33 @@ ig_poll: PROCEDURE
             fire_ctr = fire_ctr + 1
             btn_bits = btn_bits + 1
             ps_dirty = 1
+            ' client-side tracer along the aim line, stopping where the
+            ' server's shot resolution would (LOS blockers, range 6);
+            ' entities aren't checked -- they draw over the tracer anyway
+            sw_x = px
+            sw_y = py
+            trc_i = 0
+            WHILE trc_i < 6
+                sw_x = sw_x + dx_tab(aim)
+                sw_y = sw_y + dy_tab(aim)
+                IF sw_x = 0 THEN EXIT WHILE
+                IF sw_y = 0 THEN EXIT WHILE
+                IF sw_x >= WORLD_W - 1 THEN EXIT WHILE
+                IF sw_y >= WORLD_H - 1 THEN EXIT WHILE
+                mv_nx = sw_x - org_x
+                IF mv_nx >= WIN_W THEN EXIT WHILE
+                mv_ny = sw_y - org_y
+                IF mv_ny >= WIN_H THEN EXIT WHILE
+                #t0 = PEEK(taddr(mv_nx, mv_ny)) AND 255
+                IF #t0 > 51 THEN EXIT WHILE
+                IF los_tab(#t0) THEN EXIT WHILE
+                trc_i = trc_i + 1
+            WEND
+            POKE TRCBUF, px
+            POKE TRCBUF + 1, py
+            POKE TRCBUF + 2, aim
+            POKE TRCBUF + 3, trc_i
+            IF trc_i > 0 THEN trc_ttl = 5
             sfx_id = 2
             GOSUB sfx_start
         END IF
@@ -87,7 +117,6 @@ END
 ' ---------------------------------------------------------------------------
 ig_move: PROCEDURE
     IF ig_dir = 255 THEN RETURN
-    aim = ig_dir
     facing = face_tab(ig_dir)
     IF world_tick = move_last_world THEN RETURN
     sw_x = px + dx_tab(ig_dir)

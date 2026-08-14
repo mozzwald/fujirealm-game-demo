@@ -24,6 +24,15 @@ blk_tab:
     DATA 0,0,0,0,1,1,1,0,1,1,1,1,0,0,0,0
     DATA 0,0,0,0
 
+' los_tab: 1 = blocks shots (the server's smaller line-of-sight set:
+' tiles 2,4,7,8,11,12,16 -- see lynx predict.c). Used by the tracer so it
+' stops where the real shot stops.
+los_tab:
+    DATA 0,0,1,0,1,0,0,1,1,0,0,1,1,0,0,0
+    DATA 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DATA 0,0,0,0
+
 ' Facing deltas, wire order: 0 up,1 down,2 left,3 right,4 ul,5 ur,6 dl,7 dr.
 ' (255 = -1 as an 8-bit add.)
 dx_tab:

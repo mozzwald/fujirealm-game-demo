@@ -80,6 +80,8 @@
     CONST IDBUF   = $8960       ' identity record "user,token,host", 64B
     CONST TOKASC  = $89A0       ' token ASCII digits, 16B
     CONST NAMEBUF = $89B0       ' player name, 16B
+    CONST TRCBUF  = $89C0       ' shot tracer {x0,y0,dir,len}, 4B
+    CONST SHDBUF  = $89D0       ' stamp shadow list, 21 x {col,row}, 42B
 
 ' ---------------------------------------------------------------------------
 ' Realtime v3 protocol (COBS-framed, CRC-16/CCITT-FALSE; see docs/PROTOCOL.md
