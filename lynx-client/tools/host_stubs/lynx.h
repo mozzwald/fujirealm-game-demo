@@ -23,6 +23,19 @@ extern struct __suzy _suzy;
 #define BUTTON_OPTION1 0x08
 #define BUTTON_OPTION2 0x04
 #define BUTTON_PAUSE   0x01
+/* Mikey's audio registers, laid out as the real header has them, so sfx.c
+ * compiles and its schedule can be host-tested. The storage is a plain struct
+ * here; tests assert on the playhead, not on what was poked. */
+struct _mikey_audio {
+    unsigned char volume, feedback, dac, shiftlo;
+    unsigned char reload, control, count, other;
+};
+struct __mikey {
+    struct _mikey_audio channel_a, channel_b, channel_c, channel_d;
+    unsigned char mstereo;
+};
+extern struct __mikey _mikey_regs;
+#define MIKEY _mikey_regs
 extern char lynx_160_102_16_tgi[];
 extern char lynx_stdjoy_joy[];
 extern char lynx_comlynx_ser[];

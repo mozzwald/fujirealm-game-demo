@@ -30,3 +30,7 @@ server/sessions.json.bak-*
 # Python
 __pycache__/
 *.py[cod]
+
+# Custom
+ref/
+

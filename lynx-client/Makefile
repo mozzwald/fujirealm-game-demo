@@ -1,10 +1,11 @@
 TARGET := fujirealm.lnx
 SRC := src/main.c src/bootstrap.c src/rt_state.c src/predict.c src/render.c \
-	src/blit.s src/hudtext.c src/dlgmodal.c src/nameentry.c art/lynx_art.c
+	src/blit.s src/hudtext.c src/dlgmodal.c src/nameentry.c src/sfx.c \
+	art/lynx_art.c
 HEADERS := src/bootstrap.h src/rt_state.h src/predict.h src/render.h \
-	src/hudtext.h src/dlgmodal.h src/nameentry.h art/lynx_art.h
+	src/hudtext.h src/dlgmodal.h src/nameentry.h src/sfx.h art/lynx_art.h
 HOST_SRC := tools/host_tests.c src/bootstrap.c src/rt_state.c src/predict.c \
-	src/hudtext.c src/dlgmodal.c src/nameentry.c art/lynx_art.c
+	src/hudtext.c src/dlgmodal.c src/nameentry.c src/sfx.c art/lynx_art.c
 HOST_TEST := build/host_tests
 # render.c is Lynx-only, so it needs the cc65 header stubs and a couple of
 # hardware hooks redirected; see tools/host_stubs/README.md.
@@ -42,10 +43,33 @@ LOGIN_SERVER_PORT ?= 9010
 SERVER_DEFINES := -D 'SERVER_HOST="$(SERVER_HOST)"' \
 	-D HYBRID_SERVER_PORT=$(HYBRID_SERVER_PORT) \
 	-D LOGIN_SERVER_PORT=$(LOGIN_SERVER_PORT)
-ENDPOINT := $(SERVER_HOST):$(HYBRID_SERVER_PORT):$(LOGIN_SERVER_PORT)
+
+# How many Option1 telemetry overlays to build in: 0 none, 1 perf, 2 perf+link,
+# 3 perf+link+video. They are development instruments and cost ~1.2 KB together
+# in a segment that has about that much left, so they are off by default:
+#   make DIAG=3
+# DIAG=3 does not fit alongside the sound tables with the default stack -- it
+# overruns MAIN by a few bytes -- so it needs STACKSIZE below, e.g.
+#   make DIAG=3 STACKSIZE=0x0700
+# The boot status boxes and the hex bootstrap failure screen are always in.
+DIAG ?= 0
+DIAG_DEFINES := -D DIAG_PAGES=$(DIAG)
+
+# The cc65 software stack, and with it the ceiling on MAIN -- the two share the
+# 64K, so every byte here is a byte the program cannot have. 2K is the cc65
+# Lynx default and what every shipping build has been tested with; lowering it
+# is how you buy room for a build that does not otherwise fit, e.g.
+#   make DIAG=3 STACKSIZE=0x0700
+# A stack that is too small does not fail to link, it corrupts at runtime, so
+# treat any value below the default as needing a play test on hardware.
+STACKSIZE ?= 0x0800
+# DIAG and STACKSIZE ride along so toggling either forces the relink too;
+# see the stamp rule.
+ENDPOINT := $(SERVER_HOST):$(HYBRID_SERVER_PORT):$(LOGIN_SERVER_PORT):diag$(DIAG):stack$(STACKSIZE)
 ENDPOINT_STAMP := build/endpoint.stamp
 
-CFLAGS := -t lynx -O -I $(CC65_ROOT)/include --asm-include-dir $(CC65_ROOT)/asminc -L $(CC65_ROOT)/lib -C src/lynx.cfg -m $(MAPFILE) $(SERVER_DEFINES)
+CFLAGS := -t lynx -O -I $(CC65_ROOT)/include --asm-include-dir $(CC65_ROOT)/asminc -L $(CC65_ROOT)/lib -C src/lynx.cfg -m $(MAPFILE) -Wl -D,__STACKSIZE__=$(STACKSIZE) \
+	$(SERVER_DEFINES) $(DIAG_DEFINES)
 
 .PHONY: all art check-art clean test lint room endpoint FORCE
 
@@ -77,18 +101,19 @@ $(TARGET): $(SRC) $(HEADERS) src/lynx.cfg $(ENDPOINT_STAMP)
 # $C038/$E018), so the .lnx size does not tell you either.
 #
 # MAIN is $0200 .. $0200 + ($BE38 - stack), i.e. it ends at $B837 with the
-# default 2K stack; BSS is the last segment loaded into it.
+# default 2K stack and moves with STACKSIZE; BSS is the last segment loaded
+# into it.
 room:
 	@awk '/^Segment list:/ { in_list = 1; next } \
 	     in_list && $$1 == "BSS" { print strtonum("0x" $$3); exit }' \
 	     $(MAPFILE) | \
-	  awk '{ end = 0xB837; \
+	  awk -v stack="$(STACKSIZE)" '{ end = 0xC038 - strtonum(stack) - 1; \
 	         printf "MAIN: %d bytes used, %d free (%.1f%%)\n", \
 	                $$1 - 0x200, end - $$1, ($$1 - 0x200) * 100.0 / (end - 0x200) }'
 
 $(HOST_TEST): $(HOST_SRC) $(HEADERS)
 	mkdir -p build
-	$(CC) -std=c99 -Wall -Wextra -Werror -Isrc -o $@ $(HOST_SRC)
+	$(CC) -std=c99 -Wall -Wextra -Werror -Isrc -Itools/host_stubs -o $@ $(HOST_SRC)
 
 $(RENDER_TEST): $(RENDER_TEST_SRC) $(HEADERS) tools/host_stubs/render_test_hooks.h
 	mkdir -p build
@@ -111,7 +136,7 @@ lint:
 	@$(CC) -fsyntax-only -O2 -Wall -Wextra -Werror -Isrc -Itools/host_stubs \
 		src/render.c
 	@$(CC) -fsyntax-only -O2 -Wall -Wextra -Werror -Wno-main -Isrc \
-		-Itools/host_stubs $(SERVER_DEFINES) src/main.c
+		-Itools/host_stubs $(SERVER_DEFINES) $(DIAG_DEFINES) src/main.c
 	@echo "lint: ok"
 
 clean:

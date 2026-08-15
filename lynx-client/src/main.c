@@ -10,6 +10,22 @@
 #include "render.h"
 #include "hudtext.h"
 #include "nameentry.h"
+#include "sfx.h"
+
+/* How many of the Option1 telemetry overlays this build carries: 0 none,
+ * 1 perf, 2 perf+link, 3 perf+link+video. They are development instruments
+ * rather than parts of the game and cost about 1.2 KB together, in a segment
+ * that has about that much left, so they are opt-in:
+ *
+ *   make DIAG=3
+ *
+ * The count is also what Option1 cycles through, so a partial build has no
+ * dead positions in the rotation. Everything else diagnostic is in every
+ * build: the boot status boxes, the hex bootstrap failure screen, and the
+ * counters the overlays read. */
+#ifndef DIAG_PAGES
+#define DIAG_PAGES 0
+#endif
 
 #define SCREEN_W 160
 #define SCREEN_H 102
@@ -225,6 +241,10 @@ static unsigned char pickup_counter;
 /* Incrementing edge counter the server watches to flip PvP on/off. */
 static unsigned char pvp_toggle_counter;
 static unsigned char fire_latch;
+/* Last health seen, so a drop can be heard. Starts at 0 and rises with the
+ * first HUD_UPDATE: seeding it high would make the arrival of the real figure
+ * sound like taking a hit. */
+static unsigned char sfx_hp_last;
 static unsigned char pickup_latch;
 /* A dialogue ack whose transmit failed. The pickup counter is already bumped,
  * so the retry has to carry the same buttons byte -- a bare heartbeat in its
@@ -1472,6 +1492,7 @@ static void update_stats_sprite(void)
     hud_dirty = 2;
 }
 
+#if DIAG_PAGES >= 1
 /* One line of link/render telemetry:
  *   F frames/s   the render loop's real rate; if this is low, input is
  *                sampled too rarely and short taps are missed outright
@@ -1483,6 +1504,8 @@ static void update_stats_sprite(void)
  * C climbing while walking means the server keeps rejecting predictions;
  * R climbing means the cache fell far enough behind to need a full refill,
  * which is what an "invisible wall" pause looks like from in here. */
+
+#if DIAG_PAGES >= 3
 /* Video page: the two framebuffer addresses the renderer uses, whether it
  * confirmed which one Suzy draws into, and which one that is.
  *
@@ -1522,7 +1545,9 @@ static void update_diag_video_sprite(void)
     hud_text_render(msg_sprite, text, len, 10);
     hud_dirty = 2;
 }
+#endif /* DIAG_PAGES >= 3 */
 
+#if DIAG_PAGES >= 2
 static void update_diag_link_sprite(void)
 {
     char text[HUD_TEXT_COLS];
@@ -1551,6 +1576,7 @@ static void update_diag_link_sprite(void)
     hud_text_render(msg_sprite, text, len, 12);
     hud_dirty = 2;
 }
+#endif /* DIAG_PAGES >= 2 */
 
 static void update_diag_sprite(void)
 {
@@ -1580,6 +1606,7 @@ static void update_diag_sprite(void)
     hud_text_render(msg_sprite, text, len, 12);
     hud_dirty = 2;
 }
+#endif /* DIAG_PAGES >= 1 */
 
 /* Sample Option1 directly: cc65's joystick driver masks it out ($F3).
  * Pause is not in the joystick register at all -- it is bit 0 of Suzy's
@@ -1590,15 +1617,21 @@ static void update_diagnostics(void)
     unsigned char opt2 = (SUZY.joystick & BUTTON_OPTION2) != 0;
     unsigned char pause = (SUZY.switches & BUTTON_PAUSE) != 0;
 
-    /* Option1 cycles: off -> perf -> link -> video -> off. */
+#if DIAG_PAGES >= 1
+    /* Option1 cycles: off -> perf -> link -> video -> off, stopping at
+       whichever pages this build has. */
     if (opt && !diag_opt_latch) {
-        diag_enabled = diag_enabled >= 3 ? 0 : diag_enabled + 1;
+        diag_enabled = diag_enabled >= DIAG_PAGES ? 0 : diag_enabled + 1;
         diag_dirty = 1;
         if (!diag_enabled) {
             game.message_dirty = 1; /* restore the real message line */
         }
     }
     diag_opt_latch = opt;
+#else
+    /* The overlay pages are compiled out, so Option1 has nothing to cycle. */
+    (void)opt;
+#endif
 
     /* Option2 toggles PvP: bump the counter the server edge-detects and push a
        PLAYER_STATE at once so the flip is not deferred to the next move or
@@ -1660,16 +1693,50 @@ static void update_diagnostics(void)
        HUD change has reached both pages, same anti-flicker rule as the
        stats/message lines. diag_dirty stays set so it renders on the next
        clean frame. */
+#if DIAG_PAGES >= 1
     if (diag_enabled && diag_dirty && !hud_dirty) {
         if (diag_enabled == 1) {
             update_diag_sprite();
-        } else if (diag_enabled == 2) {
+        }
+#if DIAG_PAGES >= 2
+        else if (diag_enabled == 2) {
             update_diag_link_sprite();
-        } else {
+        }
+#endif
+#if DIAG_PAGES >= 3
+        else if (diag_enabled == 3) {
             update_diag_video_sprite();
         }
+#endif
         diag_dirty = 0;
     }
+#endif
+}
+
+/* One frame of sound. Two triggers live here rather than at the sites that
+ * cause them, because both are edges in server state rather than local events:
+ * the health drop that means damage (the Atari client reads the same byte, at
+ * fujirealm.asm:3094) and the arrival of a MESSAGE. Firing is local and is
+ * played from handle_input instead.
+ *
+ * message_seen has no other consumer -- it is cleared here so a message sounds
+ * once rather than every frame it stays on the HUD. */
+static void update_sfx(void)
+{
+    /* Only the HUD's health is authoritative -- game.health before the first
+       HUD_UPDATE is a placeholder, and watching it would sound a hit at the
+       moment the real figure arrives. */
+    if (game.hud_seen) {
+        if (game.hud_hp < sfx_hp_last) {
+            sfx_play(SFX_HURT);
+        }
+        sfx_hp_last = game.hud_hp;
+    }
+    if (game.message_seen) {
+        game.message_seen = 0;
+        sfx_for_message(game.message_id);
+    }
+    sfx_step();
 }
 
 static void update_msg_sprite(void)
@@ -1915,6 +1982,7 @@ static void handle_input(void)
     if (JOY_BTN_A(joy)) {
         if (!fire_latch) {
             fire_latch = 1;
+            sfx_play(SFX_SHOOT);
             ++fire_counter;
             buttons = RTS_BUTTON_FIRE;
             fire_aim = aim_dir;
@@ -2266,6 +2334,8 @@ static void game_loop(void)
     pvp_toggle_counter = 0;
     fire_latch = 0;
     pickup_latch = 0;
+    sfx_init();
+    sfx_hp_last = 0;
     dlg_ack_pending = 0;
     dlg_ack_retry = 0;
     map_palette_id = 0;
@@ -2387,6 +2457,7 @@ static void game_loop(void)
             update_tracers();
         }
         update_diagnostics();
+        update_sfx();
 
         /* The ComLynx driver's hardware RX ring is only 256 bytes; keep
          * draining it into the much larger software buffer while waiting
@@ -2534,7 +2605,6 @@ typedef char name_btn_layout_check[
 #define NAME_PROMPT_Y 16
 #define NAME_VALUE_Y 34
 #define NAME_HELP_Y 60
-#define NAME_TAKEN_Y 84
 
 static void name_draw_line(const char *text, unsigned char ink, signed int y)
 {
@@ -2561,17 +2631,18 @@ static void prompt_for_name(unsigned char taken)
         if (pages_owed != 0) {
             --pages_owed;
             render_modal_begin();
-            name_draw_line("ENTER YOUR NAME", DLG_INK_SPEAKER, NAME_PROMPT_Y);
+            /* The rejection replaces the title rather than adding a line:
+               a fifth name_draw_line call is a few dozen bytes, and this
+               screen shares a segment with the diagnostics overlays. */
+            name_draw_line(taken ? "NAME TAKEN - PICK ANOTHER" :
+                                   "ENTER YOUR NAME",
+                           DLG_INK_SPEAKER, NAME_PROMPT_Y);
             name_entry_display(line);
             name_draw_line(line, DLG_INK_BODY, NAME_VALUE_Y);
-            name_draw_line("UP DOWN PICKS  A ADDS  B DELS",
+            name_draw_line("UP DN PICK  A ADD  B DEL",
                            DLG_INK_PROMPT, NAME_HELP_Y);
             name_draw_line("A ON _ STARTS",
                            DLG_INK_PROMPT, NAME_HELP_Y + DLG_LINE_PITCH);
-            if (taken) {
-                name_draw_line("NAME TAKEN - PICK ANOTHER",
-                               DLG_INK_PROMPT, NAME_TAKEN_Y);
-            }
             render_modal_end();
         }
 

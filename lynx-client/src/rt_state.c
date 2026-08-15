@@ -211,6 +211,7 @@ static void apply_message(struct rt_state *state, const unsigned char *w)
     }
     state->message[len] = 0;
     state->message_len = len;
+    state->message_id = w[6];
     state->message_dirty = 1;
     /* Deliberately not conditional on w[6] (message_id): id 0 is a real
        message. See message_seen in rt_state.h. */

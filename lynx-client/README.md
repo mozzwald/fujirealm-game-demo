@@ -111,6 +111,31 @@ host-tested (`tools/host_tests.c`) like the dialogue modal's; `main.c` owns
 only the screen and the joypad. The screen reuses the dialogue modal's line
 renderer and its single shared `msg_sprite`, so it costs no sprite RAM.
 
+## Sound
+
+Five effects, mirroring the Atari client's so both say the same things at the
+same moments: shooting, taking damage, killing something, dying, levelling up.
+`src/sfx.c` drives one Mikey channel from flat, fixed-stride step tables --
+one row of eight (pitch, volume) frames per effect, indexed as `id * 8`.
+
+The Atari runs two POKEY channels with priority arbitration and a pointer
+table per effect. That structure costs ~450 bytes of cc65 codegen for the
+indirection alone, which MAIN does not have, so here a new effect simply
+replaces whatever is playing. At four to eight frames per effect that is
+inaudible.
+
+Two of the triggers are edges in server state rather than local events, and
+both live in `update_sfx()`: the health drop in `HUD_UPDATE` that means damage
+(the Atari client reads the same byte, `fujirealm.asm:3094`), and the arrival
+of a `MESSAGE`, whose `message_id` picks an effect through the same map the
+Atari uses. Firing is local and plays from `handle_input()`.
+
+**The tables have never been heard.** There is no Lynx emulator, and the
+numbers are the Atari's shapes carried across: its AUDF values are divisors
+like Mikey's timer reload (at the 8us clock the tone is `62500 / (reload + 1)`
+Hz), and its packed AUDC volume nibbles are multiplied by 8 into Mikey's plain
+amplitude. Expect to want a tuning pass on hardware.
+
 ## What the client does
 
 After loading or creating its AppKey identity, the cart bootstraps the 32x24
@@ -210,7 +235,20 @@ make clean test all
 `make art` regenerates the checked-in Lynx sprite arrays from the tileset;
 `make test` verifies those arrays are current with their source, runs the host
 and render tests, and lints the two Lynx-only files with gcc. `make room`
-prints how much of the MAIN segment is left.
+prints how much of the MAIN segment is left, and every link prints it too.
+
+Two knobs exist because MAIN is nearly full:
+
+| | |
+|---|---|
+| `DIAG=n` | How many Option1 telemetry overlays to build in: `0` none (default), `1` perf, `2` perf+link, `3` perf+link+video. All three cost ~1.2 KB. |
+| `STACKSIZE=0xNNNN` | The cc65 software stack, default `0x0800`. It and MAIN share the 64K, so lowering it buys room -- at the risk of a runtime stack overflow, which does not fail to link. |
+
+`DIAG=3` overruns MAIN by a few bytes on its own and needs the smaller stack:
+
+```bash
+make DIAG=3 STACKSIZE=0x0700     # 1.75K stack; play-test it on hardware
+```
 
 ### Pointing the cart at a server
 
@@ -390,7 +428,9 @@ cc65's joystick driver masks the Option buttons out of `SUZY.joystick` and
 Pause is not in the joystick register at all (it is bit 0 of
 `SUZY.switches`, which nothing else in the runtime reads).
 
-- **Option1** cycles the diagnostic line: off -> performance -> link -> off.
+- **Option1** cycles the diagnostic line: off -> performance -> link ->
+  video -> off, stopping at whichever pages the build has. **These pages are
+  compiled out by default** -- see `DIAG` under Build.
 - **Option2** toggles PvP (the server edge-detects the counter it bumps).
 - **Pause** cycles the render layers: `M0` everything, `M1` no terrain,
   `M2` no terrain and no entities. Leaving a mode forces a full repaint, so

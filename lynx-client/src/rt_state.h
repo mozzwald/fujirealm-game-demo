@@ -275,6 +275,9 @@ struct rt_state {
      * Gorvak's lines all use it -- so presence must never be inferred from the
      * id. The Atari client shipped that bug and needed this same flag. */
     unsigned char message_seen;
+    /* The server's MSG_* id for the message above (server/quests.py). Kept
+     * only so a sound can be chosen for it; the HUD shows the text. */
+    unsigned char message_id;
     unsigned char quest_seen;
     /* 0 means no active quest, which happens mid-campaign once a chain
      * completes; the HUD line must clear rather than keep the last text. */

@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <lynx.h>   /* tools/host_stubs: Mikey register layout for sfx.c */
 #include <stdio.h>
 #include <string.h>
 
@@ -7,9 +8,13 @@
 #include "hudtext.h"
 #include "nameentry.h"
 #include "predict.h"
+#include "sfx.h"
 #include "render.h"
 #include "rt_state.h"
 #include "../art/lynx_art.h"
+
+/* Storage for the stubbed Mikey registers sfx.c writes to. */
+struct __mikey _mikey_regs;
 
 static unsigned char sum8(const unsigned char *buf, unsigned char len)
 {
@@ -1221,6 +1226,18 @@ static void test_rt_quest_and_message(void)
     assert(rt_apply(&state, 0, 0, 0, raw, len) == RTS_MESSAGE);
     assert(state.message_seen == 1 && state.message_dirty == 1);
     assert(strcmp(state.message, "A BAT BITES!") == 0);
+    assert(state.message_id == 0);
+
+    /* The id is what picks the sound, and it is a real value in its own right
+       -- id 0 above is MSG_NONE, a message with no sound, not "no id". */
+    {
+        const unsigned char died[] = { 11, 4, 'D', 'I', 'E', 'D' };
+
+        len = build_rt_raw(RTS_MESSAGE, 0, 0x1303, died, sizeof(died), raw);
+        assert(rt_apply(&state, 0, 0, 0, raw, len) == RTS_MESSAGE);
+        assert(state.message_id == 11); /* MSG_PLAYER_DIED */
+        assert(strcmp(state.message, "DIED") == 0);
+    }
 }
 
 static void test_rt_enemy_kind_and_items(void)
@@ -1779,6 +1796,75 @@ static void test_name_entry_poll_edges(void)
     assert(name_state.held == 0);
 }
 
+static void test_sfx_schedule(void)
+{
+    unsigned char i;
+
+    sfx_init();
+    assert(sfx_end == 0);
+    /* Nothing to do while idle, and no id 0 sound: sfx_for_message hands
+       SFX_NONE straight through for every message that has no effect. */
+    sfx_step();
+    assert(sfx_end == 0);
+    sfx_play(SFX_NONE);
+    assert(sfx_end == 0);
+    sfx_play(SFX_COUNT);
+    assert(sfx_end == 0);
+
+    /* SFX_KILL is four steps in an eight-step row: it must stop at the zero
+       padding rather than hold the channel for the other four frames. */
+    sfx_play(SFX_KILL);
+    assert(sfx_end == SFX_KILL * SFX_STEPS);
+    for (i = 0; i < 4; ++i) {
+        sfx_step();
+        assert(sfx_end != 0);
+    }
+    sfx_step();
+    assert(sfx_end == 0);
+    /* Silent stays silent however long the loop runs. */
+    sfx_step();
+    sfx_step();
+    assert(sfx_end == 0);
+
+    /* A full-length row runs all eight steps and then needs one more frame to
+       silence itself -- collapsing those two leaves the last tone sounding
+       for the rest of the session. */
+    sfx_play(SFX_DEATH);
+    for (i = 0; i < SFX_STEPS; ++i) {
+        sfx_step();
+        assert(sfx_end != 0);
+    }
+    sfx_step();
+    assert(sfx_end == 0);
+
+    /* A new effect interrupts whatever is playing; with one channel that is
+       the whole arbitration policy. */
+    sfx_play(SFX_DEATH);
+    sfx_step();
+    sfx_play(SFX_SHOOT);
+    assert(sfx_at == (SFX_SHOOT - 1) * SFX_STEPS);
+    assert(sfx_end == SFX_SHOOT * SFX_STEPS);
+
+    /* The message map: the ids the Atari client sounds, and nothing else.
+       Out-of-range ids must be silent rather than reading off the table. */
+    sfx_init();
+    sfx_for_message(0);
+    assert(sfx_end == 0);
+    sfx_for_message(200);
+    assert(sfx_end == 0);
+    sfx_for_message(10); /* MSG_LEVEL_UP */
+    assert(sfx_at == (SFX_LEVELUP - 1) * SFX_STEPS);
+    sfx_init();
+    sfx_for_message(11); /* MSG_PLAYER_DIED */
+    assert(sfx_at == (SFX_DEATH - 1) * SFX_STEPS);
+    sfx_init();
+    sfx_for_message(24); /* MSG_PVP_KILL */
+    assert(sfx_at == (SFX_KILL - 1) * SFX_STEPS);
+    sfx_init();
+    sfx_for_message(14); /* MSG_GOT_GOLD -- deliberately silent */
+    assert(sfx_end == 0);
+}
+
 int main(void)
 {
     test_login_request();
@@ -1815,6 +1901,7 @@ int main(void)
     test_name_entry_cycle_and_commit();
     test_name_entry_backspace_and_full();
     test_name_entry_poll_edges();
+    test_sfx_schedule();
     puts("host client tests: ok");
     return 0;
 }
