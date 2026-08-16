@@ -39,6 +39,22 @@ OVERWORLD_TABLES = tuple(f"tile2x2_{quadrant}_overworld" for quadrant in QUADRAN
 CAVE_TABLES = tuple(f"tile2x2_{quadrant}_cave" for quadrant in QUADRANTS)
 SPRITE_TABLES = tuple(f"player_sprite_{quadrant}" for quadrant in QUADRANTS)
 
+# Player/Missile art for the local player. A normal-width GTIA player is
+# 8 pixels wide, which is exactly the width of the 2x2 character sprite it
+# replaces, so the PM frames are derived from that art rather than drawn
+# separately. The extra rows overhang above the tile.
+PM_PLAYER_H = 24
+PM_TILE_ROWS = 16
+PM_LOCAL_FRAMES = 6
+
+# Bullets ride the four GTIA missiles, which are two bits wide and share one
+# 256-byte area. That is the whole budget: eight rows of two pixels, in one
+# color (COLPF3, via fifth-player mode). The default is downsampled from the
+# BULLET tile's top cell so a project that has never edited it still looks
+# like the character bullet did.
+PM_MISSILE_H = 8
+BULLET_TILE_INDEX = 6
+
 TILE_NAMES = (
     "Grass",
     "Local Player Front 0 (Legacy Tile)",
@@ -407,6 +423,152 @@ def _emit_table(lines: list[str], label: str, values: list[int], per_line: int =
     for start in range(0, len(values), per_line):
         chunk = values[start : start + per_line]
         lines.append("        dta " + ",".join(f"${value:02X}" for value in chunk))
+
+
+def pm_frames_from_sprites(
+    font: list[int], sprites: list[list[int]]
+) -> tuple[list[int], list[int]]:
+    """Convert the 6 local-player character frames into the P0/P1 bitplanes.
+
+    An ANTIC 4 character is 4 pixels of 2 bits each, so a 2x2 sprite is
+    already 8 pixels wide by 16 rows at 2 bits per pixel -- exactly a
+    normal-width player split across two overlapped bitplanes. Pixel value 1
+    lights P0, 2 lights P1, and 3 lights both, which GTIA shows as
+    COLPM0 OR COLPM1 under multicolor player mode. The art is placed at the
+    bottom of the taller PM frame so it still fills its tile and the spare
+    rows overhang above it.
+    """
+    top_left, top_right, bottom_left, bottom_right = sprites
+    plane0: list[int] = []
+    plane1: list[int] = []
+    for frame in range(PM_LOCAL_FRAMES):
+        rows0 = [0] * PM_PLAYER_H
+        rows1 = [0] * PM_PLAYER_H
+        halves = ((top_left, top_right), (bottom_left, bottom_right))
+        for half, (left_table, right_table) in enumerate(halves):
+            # Bit 7 of a screen code selects COLPF3 in ANTIC 4; it is not part
+            # of the glyph index, and the local player frames never set it.
+            left = (left_table[frame] & 0x7F) * 8
+            right = (right_table[frame] & 0x7F) * 8
+            for line in range(8):
+                pixels = (font[left + line] << 8) | font[right + line]
+                bits0 = 0
+                bits1 = 0
+                for pixel in range(8):
+                    value = (pixels >> (14 - pixel * 2)) & 3
+                    bits0 = (bits0 << 1) | (value & 1)
+                    bits1 = (bits1 << 1) | ((value >> 1) & 1)
+                row = PM_PLAYER_H - PM_TILE_ROWS + half * 8 + line
+                rows0[row] = bits0
+                rows1[row] = bits1
+        plane0.extend(rows0)
+        plane1.extend(rows1)
+    return plane0, plane1
+
+
+def pm_missile_from_tiles(font: list[int], tiles: list[list[int]]) -> list[int]:
+    """Downsample the BULLET tile's top cell to the missile's two pixels.
+
+    The character bullet was eight pixels wide; a missile is two. Each half of
+    the row collapses to one lit pixel if any of its four pixels were lit,
+    which keeps the glyph's vertical profile -- the part that still reads at
+    this size -- rather than any of its horizontal detail.
+    """
+    top_left, top_right = tiles[0], tiles[1]
+    left = (top_left[BULLET_TILE_INDEX] & 0x7F) * 8
+    right = (top_right[BULLET_TILE_INDEX] & 0x7F) * 8
+    rows = []
+    for line in range(PM_MISSILE_H):
+        pixels = (font[left + line] << 8) | font[right + line]
+        value = 0
+        if pixels & 0xFF00:
+            value |= 2
+        if pixels & 0x00FF:
+            value |= 1
+        rows.append(value)
+    return rows
+
+
+def parse_pm_missile(value: Any) -> list[int]:
+    """Read the tile editor's explicitly authored missile art."""
+    if not isinstance(value, list) or len(value) != PM_MISSILE_H:
+        raise CharsetterError(f"pmMissile must contain {PM_MISSILE_H} rows")
+    rows = []
+    for index, entry in enumerate(value):
+        if not isinstance(entry, int) or isinstance(entry, bool) or not 0 <= entry <= 3:
+            raise CharsetterError(f"pmMissile[{index}] must be 0-3")
+        rows.append(entry)
+    return rows
+
+
+def parse_pm_sprites(value: Any) -> tuple[list[int], list[int]]:
+    """Read the tile editor's explicitly authored PM frames."""
+    if not isinstance(value, list) or len(value) != PM_LOCAL_FRAMES:
+        raise CharsetterError(f"pmSprites must contain {PM_LOCAL_FRAMES} frames")
+    plane0: list[int] = []
+    plane1: list[int] = []
+    for index, frame in enumerate(value):
+        if not isinstance(frame, dict):
+            raise CharsetterError(f"pmSprites[{index}] must be an object")
+        for plane, destination in (("p0", plane0), ("p1", plane1)):
+            rows = frame.get(plane)
+            if not isinstance(rows, list) or len(rows) != PM_PLAYER_H:
+                raise CharsetterError(
+                    f"pmSprites[{index}].{plane} must contain {PM_PLAYER_H} rows"
+                )
+            for row, byte in enumerate(rows):
+                if not isinstance(byte, int) or isinstance(byte, bool) or not 0 <= byte <= 255:
+                    raise CharsetterError(f"pmSprites[{index}].{plane}[{row}] must be a byte")
+                destination.append(byte)
+    return plane0, plane1
+
+
+def generate_pm_include(
+    font: list[int],
+    tiles: list[list[int]],
+    sprites: list[list[int]],
+    source: Path,
+    pm_sprites: Any = None,
+    pm_missile: Any = None,
+) -> str:
+    # pmSprites is optional. Without it the PM frames are derived from the
+    # character art, which keeps projects that predate PM editing building
+    # unchanged and keeps the two in sync until someone edits PM art directly.
+    if pm_sprites is None:
+        plane0, plane1 = pm_frames_from_sprites(font, sprites)
+        origin = "derived from its 2x2 character frames"
+    else:
+        plane0, plane1 = parse_pm_sprites(pm_sprites)
+        origin = "authored in the tile editor"
+    lines = [
+        "; Generated by tools/import_charsetter.py",
+        f"; Source project: {source}",
+        f"; Player/Missile art for the local player, {origin}:",
+        f"; {PM_LOCAL_FRAMES} frames of {PM_PLAYER_H} rows, 8 pixels wide,",
+        "; split into the P0 and P1 bitplanes that GTIA overlaps to produce",
+        "; three sprite colors.",
+        "",
+    ]
+    _emit_table(lines, "pm_player_p0_data", plane0, per_line=PM_PLAYER_H)
+    lines.append("")
+    _emit_table(lines, "pm_player_p1_data", plane1, per_line=PM_PLAYER_H)
+    if pm_missile is None:
+        rows = pm_missile_from_tiles(font, tiles)
+        missile_origin = "downsampled from the BULLET tile"
+    else:
+        rows = parse_pm_missile(pm_missile)
+        missile_origin = "authored in the tile editor"
+    lines.extend(
+        [
+            "",
+            f"; Bullet missile art, {missile_origin}: {PM_MISSILE_H} rows of two",
+            "; pixels, held in bits 0-1 and shifted into whichever of M0-M3 the",
+            "; bullet is using.",
+        ]
+    )
+    _emit_table(lines, "pm_bullet_data", rows, per_line=PM_MISSILE_H)
+    lines.append("")
+    return "\n".join(lines)
 
 
 def generate_include(font: list[int], tiles: list[list[int]], sprites: list[list[int]], source: Path) -> str:

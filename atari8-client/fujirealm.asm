@@ -61,6 +61,37 @@ COLPF2  = $D018
 COLPF3  = $D019
 COLBK   = $D01A
 
+; Player/Missile graphics. With CRITIC=1 the stage-2 VBI never copies the OS
+; shadows (SDMCTL/GPRIOR/PCOLRn) to hardware, so everything here is written
+; straight to the GTIA/ANTIC registers -- the same reason sync_colors_hw
+; exists for the playfield colors. The shadows are written too, purely so a
+; stage-2 pass outside realtime play stays consistent.
+HPOSP0  = $D000
+HPOSP1  = $D001
+HPOSP2  = $D002
+HPOSP3  = $D003
+HPOSM0  = $D004
+HPOSM1  = $D005
+HPOSM2  = $D006
+HPOSM3  = $D007
+SIZEP0  = $D008
+SIZEP1  = $D009
+SIZEP2  = $D00A
+SIZEP3  = $D00B
+SIZEM   = $D00C
+COLPM0  = $D012
+COLPM1  = $D013
+COLPM2  = $D014
+COLPM3  = $D015
+PRIOR   = $D01B
+GRACTL  = $D01D
+DMACTL  = $D400
+PMBASE  = $D407
+SDMCTL  = $022F
+GPRIOR  = $026F
+PCOLR0  = $02C0
+PCOLR1  = $02C1
+
 SCREEN  = $4680
 SCREEN_BACK = $4A40
 FONT    = $5000
@@ -955,6 +986,9 @@ init_new_game
         lda #>FONT
         jsr apply_display_now
         jsr install_hud_dli
+.if BUILD_PMG_PLAYER
+        jsr pm_init
+.endif
 
 ; Apply whatever art netstream_wait_for_initial_art already resolved
 ; (Overworld defaults, or the just-received MAP_CHANGE's cave/PvP art)
@@ -1035,6 +1069,12 @@ wait_frame_tick_loop
         bne wait_frame_tick_done
         inc hud_clock_hi
 wait_frame_tick_done
+.if BUILD_PMG_PLAYER
+; Every draw path funnels through here, so this is the one place that runs
+; exactly once per frame in early VBlank -- the right moment to touch PM RAM.
+; pm_player_update preserves all registers and is a no-op until pm_init runs.
+        jsr pm_player_update
+.endif
         rts
 
 swap_screen_buffers
@@ -5055,7 +5095,9 @@ draw_realtime_frame_partial
         sta target_y
         jsr draw_target_world_cell
         jsr draw_realtime_world_changes
+.if .not BUILD_PMG_PLAYER
         jsr draw_player
+.endif
         lda bullet_active
         beq draw_realtime_partial_no_bullet
         jsr draw_bullet
@@ -5284,7 +5326,9 @@ draw_dynamic_entities
         jsr draw_enemies
         jsr draw_items
         jsr draw_remote_players
+.if .not BUILD_PMG_PLAYER
         jsr draw_player
+.endif
         lda bullet_active
         beq draw_dynamic_remote_bullets
         jsr draw_bullet
@@ -8350,7 +8394,17 @@ netstream_wait_for_initial_art_done
 ; Projectiles occupy only the upper two character cells of a logical tile.
 ; Both local and remote paths share this renderer. Erasure restores only the
 ; cached terrain's upper row, leaving the lower terrain characters untouched.
+; Both bullet paths funnel through these two leaves, so gating them here is
+; all it takes to stop drawing bullets as characters. Every bullet state
+; variable stays authoritative and untouched -- pm_bullets_update paints the
+; missiles straight from bullet_active/bullet_x/y and the rbullet_* arrays.
+; The return value is the caller's "did I draw" flag; 0 keeps the erase
+; bookkeeping consistent with a screen that was never written.
 draw_bullet_top_at_target
+.if BUILD_PMG_PLAYER
+        lda #0
+        rts
+.endif
         jsr target_in_view
         beq draw_bullet_top_not_visible
         jsr screen_cell_ptr
@@ -8368,6 +8422,9 @@ draw_bullet_top_not_visible
         rts
 
 restore_target_top_cell
+.if BUILD_PMG_PLAYER
+        rts
+.endif
         jsr target_in_view
         beq restore_target_top_done
         jsr world_cell_ptr_to_wptr
@@ -8992,6 +9049,15 @@ apply_display_now
         sty DLISTH
         sta CHBAS
         sta CHBASE
+.if BUILD_PMG_PLAYER
+; PM sprites are not part of the playfield, so a display list swap does not
+; take them off screen by itself -- a modal would keep the player and any
+; bullets floating over its text. Every modal, the title screen and the
+; connection-failed screen all change display lists through here, so gating
+; on the display list being the game one covers all of them at once, and any
+; future modal for free.
+        jmp pm_set_display
+.endif
         rts
 
 ; Per-iteration OS housekeeping for the realtime loop. CRITIC=1 keeps the
@@ -9026,7 +9092,13 @@ sync_colors_hw
         sta COLPF3
         lda COLOR4
         sta COLBK
+.if BUILD_PMG_PLAYER
+; Same reason as the color shadows: a palette or display-mode switch must not
+; leave the PMG registers half configured, and nothing else re-applies them.
+        jmp pm_sync_hw
+.else
         rts
+.endif
 
 perf_world_packets
         dta 0
@@ -9637,7 +9709,11 @@ draw_items_done
 ; want all four kinds together; one shared entry point costs one jsr at
 ; each site instead of four, saving room in the tight $2000 segment.
 restore_old_dynamic_overlays
+.if .not BUILD_PMG_PLAYER
+; With the player on PMG nothing ever painted characters over its cell, so
+; there is no terrain to put back.
         jsr restore_old_player_cell
+.endif
         jsr restore_old_enemy_cells
         jsr restore_old_remote_cells
         jmp restore_old_item_cells
@@ -11021,5 +11097,646 @@ select_remote_facing_front
 
 ; Guard: helper/SFX block must not grow into the $A000 cartridge area.
         ert *>$A000
+
+.if BUILD_PMG_PLAYER
+; ---------------------------------------------------------------------------
+; Player/Missile graphics: the local player as an overlapped P0+P1 sprite.
+;
+; Why PMG at all: an ANTIC 4 character is 4 color clocks wide, so the 2x2
+; character sprite this replaces is 8 CC x 16 scanlines -- exactly the size of
+; one normal-width player. PMG therefore buys no extra horizontal resolution.
+; What it does buy, and why this exists:
+;   - three sprite colors (COLPM0, COLPM1, and their OR under multicolor
+;     player mode) that cost nothing from the four playfield colors the
+;     terrain needs;
+;   - a 24-scanline sprite that overhangs its tile, instead of the hard
+;     16-line character box;
+;   - color-clock/scanline positioning, so the player glides between tiles
+;     instead of snapping (see the pm_glide_* note below);
+;   - no character erase/restore for the player at all, which also retires
+;     the raster race described above draw_realtime_idle.
+;
+; Everything here lives at $A000-$Bxxx, which is untouched by the rest of the
+; client (the next segment down ends at $9FF3) and needs no room in the very
+; tight $2000-$9FFF map. That RAM is only RAM with BASIC disabled, which
+; MyPicoDOS does when it boots the game; there is deliberately no runtime
+; probe, because if $A000 were not RAM this segment could not have loaded in
+; the first place. Build with PMG_PLAYER=0 for the character sprite instead.
+; ---------------------------------------------------------------------------
+
+PM_BASE_ADDR = $A000
+PM_MISSILES  = PM_BASE_ADDR+$300
+PM_P0        = PM_BASE_ADDR+$400
+PM_P1        = PM_BASE_ADDR+$500
+
+; Sprite height in scanlines. 16 lines cover the tile; the extra 8 overhang
+; upward, so the player stands in its tile and is drawn taller than it.
+PM_PLAYER_H = 24
+PM_PLAYER_OVERHANG = PM_PLAYER_H-16
+
+; HPOS of the leftmost color clock of a normal-width playfield.
+PM_LEFT_EDGE = 48
+; PM RAM byte index of the first scanline of the playfield's top mode line.
+; Single-line resolution, so one byte index is one scanline, counted from the
+; start of the frame: 8 scanlines of vertical blank before display list DMA
+; begins, plus the three blank-8 lines the game display list starts with.
+; This is the one constant here that is worth eyeballing on real hardware --
+; if the sprite sits high or low by a fixed amount, it is this. See the PM RAM
+; check in docs/MEMORY_LAYOUT.md for how to read the offset back out.
+PM_PLAYFIELD_TOP = 8+24
+
+; Sub-tile glide. The seed is taken from the change in the player's *screen*
+; cell, not its world cell: when the viewport scrolls with the player its
+; screen cell does not move, and gliding there would slide the player
+; backwards against a world that is already sliding. Seeding from the screen
+; cell also makes server corrections, map changes and scroll-in from offscreen
+; fall out correctly -- only a single-cell step glides, anything larger snaps.
+PM_GLIDE_STEP_X = 3
+PM_GLIDE_STEP_Y = 6
+
+        org $A800
+
+; Sprite colors. The third color is the bitwise OR of these two, which is what
+; GTIA shows where P0 and P1 overlap under multicolor player mode, so pick the
+; pair so the OR is a usable hue: $28 (orange, lum 8) OR $06 (grey, lum 6)
+; gives $2E, orange at lum 14 -- body, dark detail, highlight.
+pm_color0
+        dta $28
+pm_color1
+        dta $06
+
+pm_enabled
+        dta 0
+pm_shown
+        dta 0
+pm_prev_offset
+        dta 0
+pm_prev_frame
+        dta 0
+pm_prev_col
+        dta 0
+pm_prev_row
+        dta 0
+pm_prev_valid
+        dta 0
+pm_col
+        dta 0
+pm_row
+        dta 0
+pm_offset
+        dta 0
+pm_frame
+        dta 0
+pm_hpos
+        dta 0
+pm_glide_x
+        dta 0
+pm_glide_y
+        dta 0
+pm_count
+        dta 0
+pm_seeded
+        dta 0
+
+; Byte offset of each of the 6 local player frames inside pm_player_p*_data.
+; A table rather than a multiply because PM_PLAYER_H is not a power of two.
+pm_frame_offset
+        dta 0*PM_PLAYER_H,1*PM_PLAYER_H,2*PM_PLAYER_H
+        dta 3*PM_PLAYER_H,4*PM_PLAYER_H,5*PM_PLAYER_H
+
+; One-time bring-up, called from init_new_game next to install_hud_dli.
+pm_init
+        lda #0
+        sta pm_enabled
+        sta pm_prev_valid
+        sta pm_glide_x
+        sta pm_glide_y
+        jsr pm_clear_ram
+        lda #>PM_BASE_ADDR
+        sta PMBASE
+        lda #0
+        sta SIZEP0
+        sta SIZEP1
+        sta SIZEP2
+        sta SIZEP3
+; Two bits per missile at double width is 4 color clocks -- one character
+; cell, matching the footprint the character bullet had.
+        lda #$55
+        sta SIZEM
+        lda #0
+; P2/P3 are unused by this client; park them off the left edge so a stale
+; GTIA state from whatever ran before us cannot leave junk on screen.
+        sta HPOSP2
+        sta HPOSP3
+        sta HPOSP0
+        sta HPOSP1
+; init_new_game applies the game display list before it gets here, while
+; pm_enabled is still 0 and pm_set_display is therefore a no-op, so the
+; initial visible state has to be set explicitly rather than inferred.
+        lda #1
+        sta pm_enabled
+        sta pm_shown
+        jmp pm_sync_hw
+
+; Zero all 2K of PM RAM, including the unused $A000-$A2FF region and the
+; missile area, so nothing is displayed until pm_player_update draws.
+pm_clear_ram
+        lda #0
+        sta ptr
+        lda #>PM_BASE_ADDR
+        sta ptr+1
+        ldx #8
+pm_clear_page
+        ldy #0
+        lda #0
+pm_clear_byte
+        sta (ptr),y
+        iny
+        bne pm_clear_byte
+        inc ptr+1
+        dex
+        bne pm_clear_page
+        rts
+
+; Push the PMG hardware state. Called from pm_init and alongside
+; sync_colors_hw, so a palette or display switch cannot leave PMG half
+; configured. See the CRITIC note: the hardware writes are the ones that
+; matter, the shadows are for consistency only.
+pm_sync_hw
+        lda pm_enabled
+        beq pm_sync_hw_done
+; DMACTL: DL DMA + single-line player resolution + player DMA + missile DMA
+; + normal-width playfield. Costs 5 bytes of DMA per scanline.
+        lda #$3e
+        sta DMACTL
+        sta SDMCTL
+; GRACTL follows pm_shown rather than being unconditionally on: the modals
+; call set_text_palette (and so sync_colors_hw, and so this) *after* switching
+; the display list, which would otherwise put the sprite straight back on
+; screen. Keeping it here also makes this routine safe to call from anywhere.
+        ldx #0
+        lda pm_shown
+        beq pm_sync_hw_gractl
+        ldx #$03
+pm_sync_hw_gractl
+        stx GRACTL
+; PRIOR: players above all playfield, multicolor players so the P0/P1 overlap
+; shows COLPM0 OR COLPM1 as a third color, and fifth-player mode so all four
+; missiles take COLPF3 instead of their parent player's color -- without it
+; the tracers on M2/M3 would inherit the unused, black COLPM2/COLPM3.
+        lda #$31
+        sta PRIOR
+        sta GPRIOR
+        lda pm_color0
+        sta COLPM0
+        sta PCOLR0
+        lda pm_color1
+        sta COLPM1
+        sta PCOLR1
+pm_sync_hw_done
+        rts
+
+; X/Y = the display list apply_display_now was just handed. Show the sprite
+; and missiles only while the game playfield is up; anything else (a modal,
+; the title screen) takes them off screen. Clearing PM RAM on the way out
+; means the sprite reappears clean and snaps to wherever the player ended up,
+; rather than gliding in from a position that is seconds stale.
+pm_set_display
+        lda pm_enabled
+        beq pm_set_display_done
+        cpx #<display_list_game
+        bne pm_set_display_hide
+        cpy #>display_list_game
+        bne pm_set_display_hide
+        lda #1
+        sta pm_shown
+        jmp pm_sync_hw
+pm_set_display_hide
+        lda #0
+        sta pm_shown
+        sta GRACTL
+        jsr pm_erase_prev
+        lda #0
+        sta pm_slot
+pm_set_display_hide_missile
+        jsr pm_missile_erase
+        inc pm_slot
+        lda pm_slot
+        cmp #4
+        bne pm_set_display_hide_missile
+pm_set_display_done
+        rts
+
+; Called once per frame from wait_frame_tick, immediately after the RTCLOK
+; spin, so the PM RAM blit lands in early VBlank ahead of the beam. Every
+; draw path funnels through wait_frame_tick, including the idle path where
+; nothing is dirty -- which is what keeps the glide animating. Preserves all
+; registers: wait_frame_tick's callers include netstream_send_raw_byte's
+; retry loop, and target_x/target_y are the netstream handler's cc65 stack
+; pointer, so this deliberately does not use target_in_view or screen_x/y.
+pm_player_update
+        pha
+        txa
+        pha
+        tya
+        pha
+; The modal wait loops keep servicing network I/O, so this still runs while a
+; modal is up. Nothing is displayed then, so skip the work entirely.
+        lda pm_enabled
+        beq pm_player_update_ret
+        lda pm_shown
+        beq pm_player_update_ret
+        jsr pm_player_update_body
+        jsr pm_bullets_update
+pm_player_update_ret
+        pla
+        tay
+        pla
+        tax
+        pla
+        rts
+
+; Placed ahead of the body so the two off-view checks can reach it with a
+; branch instead of a jump.
+pm_hide
+        jsr pm_erase_prev
+        lda #0
+        sta HPOSP0
+        sta HPOSP1
+        sta pm_glide_x
+        sta pm_glide_y
+        rts
+
+pm_player_update_body
+        lda player_x
+        sec
+        sbc view_x
+        cmp #VIEW_TILE_W
+        bcs pm_hide
+        sta pm_col
+        lda player_y
+        sec
+        sbc view_y
+        cmp #VIEW_TILE_H
+        bcs pm_hide
+        sta pm_row
+
+        jsr pm_update_glide
+
+; hpos = left edge + col*8 + glide
+        lda pm_col
+        asl
+        asl
+        asl
+        clc
+        adc #PM_LEFT_EDGE
+        clc
+        adc pm_glide_x
+        sta pm_hpos
+        sta HPOSP0
+        sta HPOSP1
+
+; PM RAM offset = playfield top + row*16 - overhang + glide
+        lda pm_row
+        asl
+        asl
+        asl
+        asl
+        clc
+        adc #PM_PLAYFIELD_TOP-PM_PLAYER_OVERHANG
+        clc
+        adc pm_glide_y
+        sta pm_offset
+
+        jsr select_player_tile
+        sta pm_frame
+
+; Nothing to redraw unless the frame or the vertical offset changed --
+; horizontal movement is just the HPOS write above.
+        lda pm_prev_valid
+        beq pm_redraw
+        lda pm_offset
+        cmp pm_prev_offset
+        bne pm_redraw
+        lda pm_frame
+        cmp pm_prev_frame
+        beq pm_player_update_body_done
+
+pm_redraw
+        jsr pm_erase_prev
+        ldx pm_frame
+        ldy pm_frame_offset,x
+        ldx pm_offset
+        lda #PM_PLAYER_H
+        sta pm_count
+pm_blit
+        lda pm_player_p0_data,y
+        sta PM_P0,x
+        lda pm_player_p1_data,y
+        sta PM_P1,x
+        iny
+        inx
+        dec pm_count
+        bne pm_blit
+        lda pm_offset
+        sta pm_prev_offset
+        lda pm_frame
+        sta pm_prev_frame
+        lda #1
+        sta pm_prev_valid
+pm_player_update_body_done
+        rts
+
+; Blank the 24-byte window the sprite occupied last frame. Always runs before
+; the blit, so an overlapping new position still ends up correct.
+pm_erase_prev
+        lda pm_prev_valid
+        beq pm_erase_prev_done
+        lda #0
+        sta pm_prev_valid
+        ldx pm_prev_offset
+        ldy #PM_PLAYER_H
+        lda #0
+pm_erase_byte
+        sta PM_P0,x
+        sta PM_P1,x
+        inx
+        dey
+        bne pm_erase_byte
+pm_erase_prev_done
+        rts
+
+; Seed the glide from a single-cell screen move, then decay it toward zero.
+; Anything other than a one-cell step (first appearance, map change, a server
+; correction that moves the player further than it predicted) snaps instead.
+pm_update_glide
+        lda #0
+        sta pm_seeded
+        lda pm_prev_valid
+        beq pm_glide_snap
+        lda pm_col
+        sec
+        sbc pm_prev_col
+        beq pm_glide_col_done
+        cmp #1
+        beq pm_glide_moved_right
+        cmp #$ff
+        beq pm_glide_moved_left
+        jmp pm_glide_snap
+; Moved one cell right, so start the sprite a tile's width to the left of
+; where it now belongs and let the decay carry it across.
+pm_glide_moved_right
+        lda #-8
+        sta pm_glide_x
+        sta pm_seeded
+        jmp pm_glide_col_done
+pm_glide_moved_left
+        lda #8
+        sta pm_glide_x
+        sta pm_seeded
+pm_glide_col_done
+        lda pm_row
+        sec
+        sbc pm_prev_row
+        beq pm_glide_row_done
+        cmp #1
+        beq pm_glide_moved_down
+        cmp #$ff
+        beq pm_glide_moved_up
+        jmp pm_glide_snap
+pm_glide_moved_down
+        lda #-16
+        sta pm_glide_y
+        sta pm_seeded
+        jmp pm_glide_row_done
+pm_glide_moved_up
+        lda #16
+        sta pm_glide_y
+        sta pm_seeded
+pm_glide_row_done
+        lda pm_col
+        sta pm_prev_col
+        lda pm_row
+        sta pm_prev_row
+; Don't decay on the frame the glide was seeded, or the sprite would skip
+; the first step of its travel and start a fraction of a tile in.
+        lda pm_seeded
+        bne pm_update_glide_done
+        lda pm_glide_x
+        ldy #PM_GLIDE_STEP_X
+        jsr pm_decay
+        sta pm_glide_x
+        lda pm_glide_y
+        ldy #PM_GLIDE_STEP_Y
+        jsr pm_decay
+        sta pm_glide_y
+pm_update_glide_done
+        rts
+pm_glide_snap
+        lda #0
+        sta pm_glide_x
+        sta pm_glide_y
+        lda pm_col
+        sta pm_prev_col
+        lda pm_row
+        sta pm_prev_row
+        rts
+
+; A = signed offset, Y = step. Returns A moved Y toward zero, without
+; overshooting past it.
+pm_decay
+        cmp #0
+        beq pm_decay_done
+        bmi pm_decay_negative
+        sty pm_count
+        sec
+        sbc pm_count
+        bpl pm_decay_done
+        lda #0
+        rts
+pm_decay_negative
+        sty pm_count
+        clc
+        adc pm_count
+        bmi pm_decay_done
+        lda #0
+pm_decay_done
+        rts
+
+; ---------------------------------------------------------------------------
+; Bullets on the missiles. There are exactly four: the local bullet takes M0
+; and the three remote tracer slots take M1-M3. All four share the one
+; $A300 area at two bits each, so drawing is a read-modify-write of the
+; slot's bit pair; each missile keeps its own previous window so a redraw
+; only has to clear eight bytes rather than the whole area.
+; ---------------------------------------------------------------------------
+
+PM_MISSILE_H = 8
+
+pm_missile_clear
+        dta $fc,$f3,$cf,$3f
+pm_missile_prev_off
+        dta 0,0,0,0
+pm_missile_prev_valid
+        dta 0,0,0,0
+pm_slot
+        dta 0
+pm_rindex
+        dta 0
+pm_mask
+        dta 0
+pm_bx
+        dta 0
+pm_by
+        dta 0
+pm_missile_hpos
+        dta 0
+pm_missile_off
+        dta 0
+pm_shift
+        dta 0
+
+pm_bullets_update
+        lda #0
+        sta pm_slot
+        lda bullet_active
+        beq pm_bullet_local_off
+        lda bullet_x
+        sta pm_bx
+        lda bullet_y
+        sta pm_by
+        jsr pm_missile_draw
+        jmp pm_bullets_remote
+pm_bullet_local_off
+        jsr pm_missile_hide
+pm_bullets_remote
+        lda #0
+        sta pm_rindex
+pm_bullets_remote_loop
+        lda pm_rindex
+        cmp #RBULLET_SLOTS
+        beq pm_bullets_done
+        inc pm_slot
+        ldx pm_rindex
+        lda rbullet_active,x
+        beq pm_bullet_remote_off
+        lda rbullet_x,x
+        sta pm_bx
+        lda rbullet_y,x
+        sta pm_by
+        jsr pm_missile_draw
+        jmp pm_bullets_remote_next
+pm_bullet_remote_off
+        jsr pm_missile_hide
+pm_bullets_remote_next
+        inc pm_rindex
+        jmp pm_bullets_remote_loop
+pm_bullets_done
+        rts
+
+pm_missile_hide
+        jsr pm_missile_erase
+        ldx pm_slot
+        lda #0
+        sta HPOSM0,x
+        rts
+
+; Clear this slot's bit pair across the eight bytes it occupied last frame,
+; leaving the other three missiles in those bytes untouched.
+pm_missile_erase
+        ldx pm_slot
+        lda pm_missile_prev_valid,x
+        beq pm_missile_erase_done
+        lda #0
+        sta pm_missile_prev_valid,x
+        lda pm_missile_clear,x
+        sta pm_mask
+        ldy pm_missile_prev_off,x
+        ldx #PM_MISSILE_H
+pm_missile_erase_byte
+        lda PM_MISSILES,y
+        and pm_mask
+        sta PM_MISSILES,y
+        iny
+        dex
+        bne pm_missile_erase_byte
+pm_missile_erase_done
+        rts
+
+; Placed ahead of pm_missile_draw so its two off-view checks can branch here.
+pm_missile_offscreen
+        ldx pm_slot
+        lda #0
+        sta HPOSM0,x
+        rts
+
+pm_missile_draw
+        jsr pm_missile_erase
+        lda pm_bx
+        sec
+        sbc view_x
+        cmp #VIEW_TILE_W
+        bcs pm_missile_offscreen
+; Two color clocks in from the tile's left edge: at double width a missile is
+; 4 CC across, so this centers it over the left character of the cell the
+; character bullet used to occupy.
+        asl
+        asl
+        asl
+        clc
+        adc #PM_LEFT_EDGE+2
+        sta pm_missile_hpos
+        lda pm_by
+        sec
+        sbc view_y
+        cmp #VIEW_TILE_H
+        bcs pm_missile_offscreen
+        asl
+        asl
+        asl
+        asl
+        clc
+        adc #PM_PLAYFIELD_TOP
+        sta pm_missile_off
+        ldx pm_slot
+        lda pm_missile_hpos
+        sta HPOSM0,x
+        lda pm_missile_off
+        sta pm_missile_prev_off,x
+        lda #1
+        sta pm_missile_prev_valid,x
+; Each row of pm_bullet_data holds this missile's two pixels in bits 0-1;
+; shifting left by the slot's bit position moves them into M0's, M1's, M2's
+; or M3's share of the byte. ORA alone is enough because pm_missile_erase has
+; already cleared this slot's bits, and it can never disturb the other three.
+        txa
+        asl
+        sta pm_shift
+        ldy pm_missile_off
+        ldx #0
+pm_missile_draw_row
+        stx pm_count
+        lda pm_bullet_data,x
+        ldx pm_shift
+        beq pm_missile_draw_shifted
+pm_missile_draw_shift
+        asl
+        dex
+        bne pm_missile_draw_shift
+pm_missile_draw_shifted
+        ora PM_MISSILES,y
+        sta PM_MISSILES,y
+        iny
+        ldx pm_count
+        inx
+        cpx #PM_MISSILE_H
+        bne pm_missile_draw_row
+        rts
+
+        icl "generated/fujirealm_pm_art.inc"
+
+; Guard: the PMG block must not run off the top of RAM.
+        ert *>$C000
+.endif
 
         run start

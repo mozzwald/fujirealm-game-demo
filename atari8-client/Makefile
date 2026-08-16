@@ -6,6 +6,9 @@ SERVER_HOST ?= localhost
 HYBRID_SERVER_PORT ?= 9000
 LOGIN_SERVER_PORT ?= 9010
 REMOTE_PLAYER_SLOTS ?= 12
+# 1: local player drawn with Player/Missile Graphics (PM RAM at $A000).
+# 0: local player drawn with the original 2x2 character sprite.
+PMG_PLAYER ?= 1
 
 # Set these once in an untracked config.mk instead of passing them every time:
 #   cp config.mk.example config.mk
@@ -18,6 +21,7 @@ GAME_LST := build/fujirealm_game.lst
 GAME_LAB := build/fujirealm_game.lab
 SRC := fujirealm.asm
 ART_INC := generated/fujirealm_art.inc
+PM_ART_INC := generated/fujirealm_pm_art.inc
 CHARSETTER_BASE := art/fujirealm_charsetter
 CHARSETTER_PROJECT ?= $(CHARSETTER_BASE).json
 CHARSETTER_FONT ?= $(CHARSETTER_BASE).fnt
@@ -53,15 +57,18 @@ $(SERVER_HOST_INC): FORCE | generated
 	python3 $(TOOLS)/write_server_host_default.py "$(SERVER_HOST)" "$(HYBRID_SERVER_PORT)" "$(LOGIN_SERVER_PORT)" $@
 
 $(BUILD_OPTIONS_INC) $(REMOTE_PLAYER_ARRAYS_INC): FORCE | generated
-	python3 $(TOOLS)/write_remote_player_options.py "$(REMOTE_PLAYER_SLOTS)" "$(BUILD_OPTIONS_INC)" "$(REMOTE_PLAYER_ARRAYS_INC)"
+	python3 $(TOOLS)/write_remote_player_options.py "$(REMOTE_PLAYER_SLOTS)" "$(BUILD_OPTIONS_INC)" "$(REMOTE_PLAYER_ARRAYS_INC)" "$(PMG_PLAYER)"
 
 # The tile-editor project is the art source of truth, so the assembly include
 # is derived rather than checked in -- a fresh clone builds without first
 # having to run an art command by hand.
-$(ART_INC): $(CHARSETTER_PROJECT) | generated
-	python3 $(TOOLS)/import_charsetter.py $(CHARSETTER_PROJECT) --output $@
+# Depends on the importer as well as the project: a change to how the art is
+# converted has to regenerate the include, or a stale one silently survives.
+$(ART_INC) $(PM_ART_INC): $(CHARSETTER_PROJECT) $(TOOLS)/import_charsetter.py $(TOOLS)/charsetter.py | generated
+	python3 $(TOOLS)/import_charsetter.py $(CHARSETTER_PROJECT) \
+		--output $(ART_INC) --pm-output $(PM_ART_INC)
 
-$(GAME_XEX): $(SRC) $(ART_INC) $(SERVER_HOST_INC) $(BUILD_OPTIONS_INC) $(REMOTE_PLAYER_ARRAYS_INC) | build
+$(GAME_XEX): $(SRC) $(ART_INC) $(PM_ART_INC) $(SERVER_HOST_INC) $(BUILD_OPTIONS_INC) $(REMOTE_PLAYER_ARRAYS_INC) | build
 	$(MADS) $(SRC) -l:$(GAME_LST) -t:$(GAME_LAB) -o:$(GAME_XEX)
 
 netstream:

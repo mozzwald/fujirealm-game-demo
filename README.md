@@ -94,6 +94,17 @@ cp lynx-client/config.mk.example  lynx-client/config.mk
 silently leaving the old address in the binary. `SERVER_HOST` is limited to 31  
 characters; the Lynx client checks that at compile time.
 
+The Atari client draws the local player with Player/Missile graphics: three  
+sprite colours that cost nothing from the four playfield colours, a sprite  
+taller than its tile, and pixel-smooth movement between tiles. Bullets ride the  
+four missiles. All of it lives in otherwise-unused RAM at `$A000-$BFFF`, so it  
+needs BASIC disabled, which the `.atr` boot does. To fall back to the original  
+2×2 character sprite:
+
+```sh
+make atari PMG_PLAYER=0
+```
+
 ## Run the server
 
 Two ports: a login/bootstrap port and the realtime port.

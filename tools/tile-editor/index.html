@@ -83,10 +83,21 @@
             </header>
             <div class="tile-stage">
                 <canvas id="tile-canvas" width="512" height="512"></canvas>
+                <canvas id="pm-canvas" width="256" height="576" hidden></canvas>
                 <div id="empty-state" class="empty-state">
                     <i class="bi bi-grid-1x2"></i>
                     <span>Load a FujiRealm project</span>
                 </div>
+            </div>
+            <!-- Only the six local-player frames and the bullet render as
+                 Player/Missile graphics; every other tile stays character art. -->
+            <div id="pm-bar" class="quadrant-bar" hidden>
+                <div id="pm-colors" class="quadrant-buttons"></div>
+                <button id="pm-reseed" class="button" title="Replace this PM art with the character art it was derived from"><i class="bi bi-arrow-repeat"></i> Reseed From Characters</button>
+                <label class="toggle-control">
+                    <input id="pm-toggle" type="checkbox">
+                    <span id="pm-toggle-label">Edit PM sprite</span>
+                </label>
             </div>
             <div class="quadrant-bar">
                 <div id="quadrant-buttons" class="quadrant-buttons"></div>

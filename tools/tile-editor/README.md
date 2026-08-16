@@ -34,6 +34,45 @@ Tile names, categories, visibility, target types, target indices, and animation
 membership are runtime metadata: the game's importer rejects changes to them.
 Pixel data and each tile's four character codes are what you edit.
 
+### Player/Missile sprite
+
+The six **local** player frames are drawn by the client as a Player/Missile
+sprite rather than characters (`PMG_PLAYER=1`, the default). Select one of them
+and tick **Edit PM sprite** to swap the centre canvas for the PM grid: 8 pixels
+wide by 24 rows, with an orange line marking the top of the tile the player
+stands in — the rows above it overhang and draw over the terrain behind.
+
+A pixel has four values rather than five: transparent, `COLPM0`, `COLPM1`, and
+the overlap, which GTIA shows as the bitwise OR of the two colour registers.
+That is where the extra colour comes from: the PM sprite does not spend any of
+the four playfield colours the terrain needs. Right-click erases.
+
+PM art is optional in the project file. Until you edit it, it is derived from
+the character frames below it, so editing the 2x2 character sprite keeps the
+PM sprite in step. The first PM edit stores the frames explicitly and that link
+stops; **Reseed From Characters** re-derives the selected frame on demand.
+
+Remote players are still character art — there are only four GTIA players, and
+this client renders up to twelve of them.
+
+### Bullet missile
+
+Bullets ride the four GTIA missiles (M0 local, M1-M3 the remote tracers).
+Select the **Bullet** tile and tick **Edit PM missile** for its grid.
+
+A missile is two bits wide in a single colour, so that is the whole budget:
+eight rows of two pixels, drawn in `COLPF3`. There is no colour to pick — left
+click lights a pixel, right click clears it. The two pixels are 2 colour clocks
+each at the double width the client uses, so the missile covers one character
+cell, the left half of the two the character bullet used to fill.
+
+Like the PM sprite this is optional and derived until edited, here by
+downsampling the Bullet tile's top cell: each half of a row lights one pixel if
+any of its four pixels were lit, which keeps the glyph's vertical profile and
+discards horizontal detail that cannot survive at two pixels wide. Editing the
+Bullet tile's characters therefore keeps updating the missile until you draw on
+the missile directly.
+
 Save over the JSON, then rebuild — the Atari Makefile regenerates the assembly
 art include from the project automatically:
 

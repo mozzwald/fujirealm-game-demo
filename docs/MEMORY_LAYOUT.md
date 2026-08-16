@@ -145,8 +145,8 @@ there is no free byte before `WORLD = $6000`.
 the high client block, leaving 18 bytes before the `$8C00` scratch area.
 
 The default and `REMOTE_PLAYER_SLOTS=12` builds both pass the  
-`ert *>SCREEN`, `ert *>$5600`, `ert *>WORLD`, `ert *>APPKEY_DATA_BUFFER`, and  
-`ert *>$A000` ownership guards. In the 12-player build the main segment ends  
+`ert *>SCREEN`, `ert *>$5600`, `ert *>WORLD`, `ert *>APPKEY_DATA_BUFFER`,  
+`ert *>$A000`, and `ert *>$C000` ownership guards. In the 12-player build the main segment ends  
 at `$460E`, leaving 113 bytes before `SCREEN = $4680`.
 
 ## Diagonal Shot Memory Audit
@@ -225,7 +225,54 @@ The high helper block lives at `$9A00`:
 This region contains the PvP kill HUD helpers, baud selector, bootstrap  
 retry/reset helpers, parser validation/resync helpers, SFX update/request code,  
 and note/control tables for the client-side sound effect system. The block is  
-guarded with `ert *>$A000` so it cannot silently grow into the cartridge area.
+guarded with `ert *>$A000` so it cannot silently grow into the PMG area below.
+
+## Player/Missile Graphics Area (`$A000-$BFFF`)
+
+`$A000-$BFFF` is RAM with BASIC disabled, which is how MyPicoDOS boots the
+game, and nothing else in the client uses it — the next segment down ends at
+`$9FF3`. The PMG build (`PMG_PLAYER=1`, the default) puts everything for the
+local player's Player/Missile sprite here, so it costs nothing from the very
+tight `$2000-$9FFF` map:
+
+| Range         | Use                                                              |
+| ------------- | ---------------------------------------------------------------- |
+| `$A000-$A2FF` | Unused PM area, zeroed once by `pm_init`                         |
+| `$A300-$A3FF` | Missiles — M0 is the local bullet, M1-M3 the remote tracers       |
+| `$A400-$A7FF` | P0-P3, 256 bytes each (single-line resolution)                   |
+| `$A800-$AC80` | PMG code, sprite colors, and the six 24-row PM frames            |
+| `$AC81-$BFFF` | Free                                                             |
+
+`PMBASE = $A0`; single-line resolution requires the 2 KB alignment. The block
+is guarded with `ert *>$C000`. Building with `PMG_PLAYER=0` omits the segment
+entirely and restores the 2x2 character sprite, so the flag is a working
+bisect point if PMG is ever suspected.
+
+PM sprites are not part of the playfield, so swapping the display list does
+not take them off screen on its own. `apply_display_now` calls
+`pm_set_display`, which shows the sprite and missiles only while
+`display_list_game` is up and clears them out of PM RAM otherwise — that one
+hook covers every modal, the title screen, the netstream screen and the
+connection-failed screen, and any modal added later. `pm_sync_hw` sets
+`GRACTL` from `pm_shown` rather than unconditionally on, because the modals
+call `set_text_palette` *after* switching display lists and would otherwise
+turn the sprite straight back on.
+
+Because `CRITIC = 1` suppresses the OS stage-2 VBI (see the `CRITIC` note in
+`fujirealm.asm`), no OS shadow is ever copied to hardware. `pm_sync_hw` writes
+`DMACTL`, `GRACTL`, `PRIOR`, `COLPM0`/`COLPM1` and the size/position registers
+directly, the same way `sync_colors_hw` handles the playfield colors. Writing
+`SDMCTL`/`GPRIOR`/`PCOLRn` alone silently does nothing during realtime play.
+
+### Checking the sprite's vertical position
+
+`PM_PLAYFIELD_TOP` is the PM RAM byte index of the playfield's first scanline:
+8 scanlines of vertical blank before display list DMA starts, plus the three
+blank-8 lines the game display list opens with, so `8+24`. In single-line
+resolution one byte index is one scanline, so if the sprite sits high or low
+by a fixed amount this constant is the thing to adjust. To read the current
+position back out of a running client, dump `$A400` (P0) and `$A500` (P1) with
+`atari_dump_memory` — the sprite is the only non-zero 24-byte window in each.
 
 ## Practical Reading
 
@@ -238,6 +285,7 @@ For client work, the most important boundaries are:
 - `$8C00-$8FFF`: login/network scratch state
 - `$9000-$999C`: Netstream handler
 - `$9A00-$9FFF`: guarded PvP/baud/bootstrap/window-row/SFX/shot-step block, currently used through `$9FF3`
+- `$A000-$BFFF`: PM RAM plus the PMG code/art block, the one place with real room left
 
 If the client grows further, the tightest ownership boundaries to watch are the  
 main `$2000` segment below `SCREEN`, the `$8C00-$8FFF` scratch area, and the  

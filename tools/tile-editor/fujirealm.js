@@ -5,6 +5,16 @@
     const PALETTE_NAMES = ['COLBAK', 'COLPF0', 'COLPF1', 'COLPF2', 'COLPF3'];
     const PALETTE_HEX = [0x00, 0xc8, 0x24, 0x0e, 0x4a];
     const PALETTE_CSS = ['#0F0F0F', '#6EAF3C', '#833B28', '#EFEFEF', '#E08CE0'];
+    // PM sprite colors, matching pm_color0/pm_color1 in fujirealm.asm. The
+    // third entry is what GTIA shows where P0 and P1 overlap: the bitwise OR
+    // of the two color register values, $28 | $06 = $2E.
+    const PM_COLOR_NAMES = ['Transparent', 'COLPM0', 'COLPM1', 'Overlap'];
+    const PM_COLOR_HEX = [null, 0x28, 0x06, 0x2e];
+    const PM_COLOR_CSS = ['#161616', '#C86818', '#585858', '#F0A040'];
+    const PM_SCALE_X = 32;
+    const PM_SCALE_Y = 24;
+    const PM_MISSILE_SCALE_X = 64;
+    const PM_MISSILE_SCALE_Y = 48;
     const STORAGE_KEY = 'fujirealm_tile_editor_v4';
     const MAX_UNDO = 200;
 
@@ -15,7 +25,7 @@
         'tile-binding', 'tile-canvas', 'empty-state', 'quadrant-buttons', 'assign-character',
         'inverse-toggle', 'tile-coordinate', 'status-text', 'tile-search', 'category-filter',
         'tile-list', 'animation-controls', 'animation-play', 'animation-frames', 'message-dialog',
-        'dialog-title', 'dialog-message'
+        'dialog-title', 'dialog-message', 'pm-canvas', 'pm-bar', 'pm-colors', 'pm-reseed', 'pm-toggle', 'pm-toggle-label'
     ].map(id => [id, document.getElementById(id)]));
 
     let project = null;
@@ -33,6 +43,9 @@
     let animationTimer = null;
     let animation = null;
     let animationFrame = 0;
+    let pmEditing = false;
+    let pmColor = 1;
+    let drawingPm = false;
 
     function showMessage(title, message) {
         elements['dialog-title'].textContent = title;
@@ -270,12 +283,173 @@
         });
     }
 
+    // The six local-player frames and the bullet are the only art the client
+    // draws with Player/Missile graphics; everything else is characters.
+    function pmFrameIndex(definition) {
+        if (!definition || definition.targetType !== 'playerSprite') return -1;
+        return definition.targetIndex < Model.PM_SPRITE_COUNT ? definition.targetIndex : -1;
+    }
+
+    function pmMode(definition) {
+        if (pmFrameIndex(definition) >= 0) return 'sprite';
+        if (definition && definition.targetType === 'logicalTile' && definition.targetIndex === Model.BULLET_TILE_INDEX) return 'missile';
+        return null;
+    }
+
+    // Read-only view of the current PM frame. A project with no stored PM art
+    // derives it from the characters on the fly, so editing the character
+    // sprite keeps updating the PM sprite until the PM art is edited directly
+    // -- materializing it on a mere render would silently break that link.
+    function selectedPmSprite() {
+        if (!project) return null;
+        const index = pmFrameIndex(previewDefinition());
+        if (index < 0) return null;
+        return project.pmSprites ? project.pmSprites[index] : Model.derivePmSprite(project, index);
+    }
+
+    // Writable view: this is where a project stops deriving its PM art.
+    function editablePmSprite() {
+        if (!project) return null;
+        const index = pmFrameIndex(selectedDefinition());
+        if (index < 0) return null;
+        return Model.ensurePmSprites(project)[index];
+    }
+
+    function pmAvailable() {
+        return pmMode(previewDefinition()) !== null;
+    }
+
+    function renderPmColors() {
+        elements['pm-colors'].replaceChildren();
+        PM_COLOR_NAMES.forEach((name, value) => {
+            const button = document.createElement('button');
+            button.className = `quadrant-button${value === pmColor ? ' active' : ''}`;
+            button.style.borderColor = PM_COLOR_CSS[value];
+            button.textContent = PM_COLOR_HEX[value] === null
+                ? name
+                : `${name} $${PM_COLOR_HEX[value].toString(16).padStart(2, '0').toUpperCase()}`;
+            button.addEventListener('click', () => { pmColor = value; renderPmColors(); });
+            elements['pm-colors'].appendChild(button);
+        });
+    }
+
+    function renderPmCanvas() {
+        const canvas = elements['pm-canvas'];
+        const mode = pmMode(previewDefinition());
+        const showing = mode !== null && pmEditing;
+        elements['pm-bar'].hidden = mode === null;
+        elements['pm-toggle'].checked = pmEditing;
+        elements['pm-toggle-label'].textContent = mode === 'missile' ? 'Edit PM missile' : 'Edit PM sprite';
+        canvas.hidden = !showing;
+        elements['tile-canvas'].hidden = showing || !previewDefinition();
+        if (!showing) return;
+        if (mode === 'missile') { renderPmMissileCanvas(); return; }
+        canvas.width = 8 * PM_SCALE_X;
+        canvas.height = Model.PM_SPRITE_H * PM_SCALE_Y;
+        elements['pm-colors'].hidden = false;
+        renderPmColors();
+        const sprite = selectedPmSprite();
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (let y = 0; y < Model.PM_SPRITE_H; y++) {
+            for (let x = 0; x < 8; x++) {
+                ctx.fillStyle = PM_COLOR_CSS[Model.pmPixel(sprite, x, y)];
+                ctx.fillRect(x * PM_SCALE_X, y * PM_SCALE_Y, PM_SCALE_X, PM_SCALE_Y);
+            }
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,.12)';
+        ctx.lineWidth = 1;
+        for (let x = PM_SCALE_X; x < canvas.width; x += PM_SCALE_X) { ctx.beginPath(); ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, canvas.height); ctx.stroke(); }
+        for (let y = PM_SCALE_Y; y < canvas.height; y += PM_SCALE_Y) { ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(canvas.width, y + .5); ctx.stroke(); }
+        // Where the tile the player stands in begins: rows above this line
+        // overhang it and draw over whatever terrain is behind.
+        const tileTop = Model.PM_OVERHANG * PM_SCALE_Y;
+        ctx.strokeStyle = '#ef7d21';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(0, tileTop + .5); ctx.lineTo(canvas.width, tileTop + .5); ctx.stroke();
+    }
+
+    // A missile is two bits wide in a single colour, so there is nothing to
+    // pick: left click lights a pixel, right click clears it.
+    function renderPmMissileCanvas() {
+        const canvas = elements['pm-canvas'];
+        canvas.width = 2 * PM_MISSILE_SCALE_X;
+        canvas.height = Model.PM_MISSILE_H * PM_MISSILE_SCALE_Y;
+        elements['pm-colors'].hidden = true;
+        const rows = project.pmMissile || Model.derivePmMissile(project);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (let y = 0; y < Model.PM_MISSILE_H; y++) {
+            for (let x = 0; x < 2; x++) {
+                ctx.fillStyle = Model.pmMissilePixel(rows, x, y) ? currentPalette()[4] : PM_COLOR_CSS[0];
+                ctx.fillRect(x * PM_MISSILE_SCALE_X, y * PM_MISSILE_SCALE_Y, PM_MISSILE_SCALE_X, PM_MISSILE_SCALE_Y);
+            }
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,.12)';
+        ctx.lineWidth = 1;
+        for (let x = PM_MISSILE_SCALE_X; x < canvas.width; x += PM_MISSILE_SCALE_X) { ctx.beginPath(); ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, canvas.height); ctx.stroke(); }
+        for (let y = PM_MISSILE_SCALE_Y; y < canvas.height; y += PM_MISSILE_SCALE_Y) { ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(canvas.width, y + .5); ctx.stroke(); }
+    }
+
+    function editPmMissileAt(event) {
+        const rows = Model.ensurePmMissile(project);
+        const point = canvasPoint(event, elements['pm-canvas']);
+        const x = Math.floor(point.x / PM_MISSILE_SCALE_X);
+        const y = Math.floor(point.y / PM_MISSILE_SCALE_Y);
+        if (x < 0 || x > 1 || y < 0 || y >= Model.PM_MISSILE_H) return;
+        const key = `pmm:${x}:${y}`;
+        if (strokeVisited.has(key)) return;
+        strokeVisited.add(key);
+        Model.setPmMissilePixel(rows, x, y, !(event.buttons === 2 || event.button === 2));
+        setDirty(true);
+        elements['tile-coordinate'].textContent = `X=${x} Y=${y}`;
+        renderPmCanvas();
+    }
+
+    function editPmAt(event) {
+        if (pmMode(selectedDefinition()) === 'missile') { editPmMissileAt(event); return; }
+        const sprite = editablePmSprite();
+        if (!sprite) return;
+        const point = canvasPoint(event, elements['pm-canvas']);
+        const x = Math.floor(point.x / PM_SCALE_X);
+        const y = Math.floor(point.y / PM_SCALE_Y);
+        if (x < 0 || x > 7 || y < 0 || y >= Model.PM_SPRITE_H) return;
+        const key = `pm:${x}:${y}`;
+        if (strokeVisited.has(key)) return;
+        strokeVisited.add(key);
+        Model.setPmPixel(sprite, x, y, event.buttons === 2 || event.button === 2 ? 0 : pmColor);
+        setDirty(true);
+        elements['tile-coordinate'].textContent = `X=${x} Y=${y}`;
+        renderPmCanvas();
+        renderLibrary();
+    }
+
+    function reseedPmSprite() {
+        const definition = selectedDefinition();
+        const mode = pmMode(definition);
+        if (!mode) return;
+        snapshotForUndo();
+        if (mode === 'missile') {
+            project.pmMissile = Model.derivePmMissile(project);
+            setStatus('PM missile reseeded from the BULLET tile');
+        } else {
+            const index = pmFrameIndex(definition);
+            Model.ensurePmSprites(project)[index] = Model.derivePmSprite(project, index);
+            setStatus('PM frame reseeded from the character art');
+        }
+        setDirty(true);
+        renderPmCanvas();
+    }
+
     function renderAll() {
         renderPalette();
         renderCharacterEditor();
         renderFont();
         renderTileHeader();
         renderTileCanvas();
+        renderPmCanvas();
         renderQuadrants();
         renderLibrary();
     }
@@ -498,7 +672,12 @@
         elements['character-canvas'].addEventListener('contextmenu', event => event.preventDefault());
         elements['character-canvas'].addEventListener('mousedown', event => { if (!project) return; drawingCharacter = true; strokeVisited.clear(); snapshotForUndo(); editCharacterAt(event); });
         elements['character-canvas'].addEventListener('mousemove', event => { if (drawingCharacter) editCharacterAt(event); });
-        window.addEventListener('mouseup', () => { drawingTile = false; drawingCharacter = false; strokeVisited.clear(); });
+        elements['pm-toggle'].addEventListener('change', event => { pmEditing = event.target.checked; stopAnimation(false); renderAll(); });
+        elements['pm-reseed'].addEventListener('click', reseedPmSprite);
+        elements['pm-canvas'].addEventListener('contextmenu', event => event.preventDefault());
+        elements['pm-canvas'].addEventListener('mousedown', event => { if (!project) return; drawingPm = true; strokeVisited.clear(); snapshotForUndo(); editPmAt(event); });
+        elements['pm-canvas'].addEventListener('mousemove', event => { if (drawingPm) editPmAt(event); });
+        window.addEventListener('mouseup', () => { drawingTile = false; drawingCharacter = false; drawingPm = false; strokeVisited.clear(); });
         window.addEventListener('keydown', event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveProject(); }
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); restoreFrom(undoStack, redoStack); }

@@ -10,11 +10,18 @@ from tools.charsetter import (
     ANIMATION_SPECS,
     DEFINITION_SPECS,
     FONT_BYTES,
+    PM_LOCAL_FRAMES,
+    PM_MISSILE_H,
+    PM_PLAYER_H,
+    PM_TILE_ROWS,
     PROJECT_TYPE,
     CharsetterError,
     build_project,
     extract_source_art,
     generate_include,
+    generate_pm_include,
+    pm_frames_from_sprites,
+    pm_missile_from_tiles,
     validate_project,
 )
 
@@ -256,6 +263,121 @@ class CharsetterV6Tests(unittest.TestCase):
             output = Path(directory) / "art.inc"
             output.write_text(include, encoding="ascii")
             self.assertGreater(output.stat().st_size, 7000)
+
+
+class PlayerMissileArtTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.font, cls.tiles, cls.sprites, cls.palette = extract_source_art(SOURCE)
+
+    def test_derived_frames_have_the_expected_shape(self) -> None:
+        plane0, plane1 = pm_frames_from_sprites(self.font, self.sprites)
+        self.assertEqual(len(plane0), PM_LOCAL_FRAMES * PM_PLAYER_H)
+        self.assertEqual(len(plane1), PM_LOCAL_FRAMES * PM_PLAYER_H)
+        self.assertTrue(all(0 <= byte <= 255 for byte in plane0 + plane1))
+
+    def test_overhang_rows_are_blank_and_the_tile_rows_are_not(self) -> None:
+        plane0, plane1 = pm_frames_from_sprites(self.font, self.sprites)
+        overhang = PM_PLAYER_H - PM_TILE_ROWS
+        for frame in range(PM_LOCAL_FRAMES):
+            base = frame * PM_PLAYER_H
+            self.assertEqual(plane0[base : base + overhang], [0] * overhang)
+            self.assertEqual(plane1[base : base + overhang], [0] * overhang)
+            body = plane0[base + overhang : base + PM_PLAYER_H]
+            body += plane1[base + overhang : base + PM_PLAYER_H]
+            self.assertTrue(any(body), f"frame {frame} converted to an empty sprite")
+
+    def test_pixel_pairs_split_across_the_two_planes(self) -> None:
+        # An ANTIC 4 pixel value of 3 has to light both planes, which is what
+        # GTIA shows as COLPM0 OR COLPM1; 1 and 2 light exactly one each.
+        font = [0] * FONT_BYTES
+        sprites = [[glyph] * 12 for glyph in (1, 2, 3, 4)]
+        font[1 * 8] = 0b01_10_11_00
+        plane0, plane1 = pm_frames_from_sprites(font, sprites)
+        row = PM_PLAYER_H - PM_TILE_ROWS
+        # Pixels left to right are 1, 2, 3, 0 from the top-left character and
+        # four transparent ones from the (blank) top-right character.
+        self.assertEqual(plane0[row], 0b1010_0000)
+        self.assertEqual(plane1[row], 0b0110_0000)
+
+    def test_authored_frames_take_precedence_over_the_derived_ones(self) -> None:
+        authored = [
+            {"p0": [0xFF] * PM_PLAYER_H, "p1": [0x00] * PM_PLAYER_H}
+            for _ in range(PM_LOCAL_FRAMES)
+        ]
+        include = generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"), authored)
+        self.assertIn("authored in the tile editor", include)
+        self.assertIn("$FF", include)
+        derived = generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"))
+        self.assertIn("derived from its 2x2 character frames", derived)
+        self.assertNotEqual(include, derived)
+
+    def test_malformed_authored_frames_are_rejected(self) -> None:
+        short = [{"p0": [0] * PM_PLAYER_H, "p1": [0] * PM_PLAYER_H}] * (PM_LOCAL_FRAMES - 1)
+        with self.assertRaisesRegex(CharsetterError, "pmSprites must contain"):
+            generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"), short)
+
+        bad_rows = [
+            {"p0": [0] * PM_PLAYER_H, "p1": [0] * (PM_PLAYER_H - 1)}
+            for _ in range(PM_LOCAL_FRAMES)
+        ]
+        with self.assertRaisesRegex(CharsetterError, r"pmSprites\[0\].p1 must contain"):
+            generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"), bad_rows)
+
+        bad_byte = [
+            {"p0": [0] * PM_PLAYER_H, "p1": [0] * PM_PLAYER_H}
+            for _ in range(PM_LOCAL_FRAMES)
+        ]
+        bad_byte[2]["p0"][5] = 256
+        with self.assertRaisesRegex(CharsetterError, r"pmSprites\[2\].p0\[5\] must be a byte"):
+            generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"), bad_byte)
+
+    def test_missile_downsamples_the_bullet_glyph(self) -> None:
+        rows = pm_missile_from_tiles(self.font, self.tiles)
+        self.assertEqual(len(rows), PM_MISSILE_H)
+        self.assertTrue(all(0 <= value <= 3 for value in rows))
+        # The bullet glyph is a small diamond in the bottom rows of its top
+        # cell, so the top rows must stay empty and the bottom ones must not.
+        self.assertEqual(rows[:5], [0] * 5)
+        self.assertTrue(all(rows[5:]))
+
+    def test_missile_halves_map_to_the_two_pixels(self) -> None:
+        font = [0] * FONT_BYTES
+        tiles = [[glyph] * 52 for glyph in (1, 2, 3, 4)]
+        font[1 * 8 + 0] = 0b00_00_00_11  # left character lit -> left pixel
+        font[2 * 8 + 1] = 0b11_00_00_00  # right character lit -> right pixel
+        rows = pm_missile_from_tiles(font, tiles)
+        self.assertEqual(rows[0], 2)
+        self.assertEqual(rows[1], 1)
+        self.assertEqual(rows[2], 0)
+
+    def test_authored_missile_takes_precedence_and_is_validated(self) -> None:
+        authored = [1, 2, 3, 0, 1, 2, 3, 0]
+        include = generate_pm_include(
+            self.font, self.tiles, self.sprites, Path("p.json"), None, authored
+        )
+        self.assertIn("authored in the tile editor", include)
+        self.assertIn("pm_bullet_data", include)
+        self.assertIn("downsampled from the BULLET tile", generate_pm_include(
+            self.font, self.tiles, self.sprites, Path("p.json")
+        ))
+
+        with self.assertRaisesRegex(CharsetterError, "pmMissile must contain"):
+            generate_pm_include(
+                self.font, self.tiles, self.sprites, Path("p.json"), None, [0, 0]
+            )
+        with self.assertRaisesRegex(CharsetterError, r"pmMissile\[3\] must be 0-3"):
+            generate_pm_include(
+                self.font, self.tiles, self.sprites, Path("p.json"), None, [0, 0, 0, 4, 0, 0, 0, 0]
+            )
+
+    def test_include_is_ascii_writable(self) -> None:
+        include = generate_pm_include(self.font, self.tiles, self.sprites, Path("p.json"))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "pm.inc"
+            output.write_text(include, encoding="ascii")
+            self.assertIn("pm_player_p0_data", output.read_text(encoding="ascii"))
+            self.assertIn("pm_player_p1_data", output.read_text(encoding="ascii"))
 
 
 if __name__ == "__main__":

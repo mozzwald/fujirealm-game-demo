@@ -56,3 +56,92 @@ test('snapshots and restores font and composition', () => {
     assert.equal(value.fontData[0], 0);
     assert.equal(value.tileDefinitions[0].characters[0], 1);
 });
+
+test('derives PM frames from the character art', () => {
+    const value = project();
+    // Glyph 5 is the top-left character of every player sprite here.
+    value.fontData[5 * 8] = 0b01_10_11_00;
+    const sprite = model.derivePmSprite(value, 0);
+    assert.equal(sprite.p0.length, model.PM_SPRITE_H);
+    // The character art sits below the overhang rows, which stay blank.
+    assert.deepEqual(sprite.p0.slice(0, model.PM_OVERHANG), Array(model.PM_OVERHANG).fill(0));
+    assert.equal(sprite.p0[model.PM_OVERHANG], 0b1010_0000);
+    assert.equal(sprite.p1[model.PM_OVERHANG], 0b0110_0000);
+});
+test('reads and writes PM pixels across both planes', () => {
+    const value = project();
+    const sprite = model.ensurePmSprites(value)[0];
+    model.setPmPixel(sprite, 3, 10, 3);
+    assert.equal(model.pmPixel(sprite, 3, 10), 3);
+    assert.equal(sprite.p0[10], 0b0001_0000);
+    assert.equal(sprite.p1[10], 0b0001_0000);
+    model.setPmPixel(sprite, 3, 10, 2);
+    assert.equal(model.pmPixel(sprite, 3, 10), 2);
+    assert.equal(sprite.p0[10], 0);
+    model.setPmPixel(sprite, 3, 10, 0);
+    assert.equal(model.pmPixel(sprite, 3, 10), 0);
+    assert.throws(() => model.setPmPixel(sprite, 3, 10, 4), /must be 0-3/);
+});
+test('treats stored PM art as optional and validates it when present', () => {
+    const value = project();
+    assert.equal(model.validateProject(value).pmSprites, undefined);
+    model.ensurePmSprites(value);
+    assert.equal(model.validateProject(value).pmSprites.length, model.PM_SPRITE_COUNT);
+    value.pmSprites[1].p0.pop();
+    assert.throws(() => model.validateProject(value), /pmSprites\[1\].p0 must contain/);
+});
+test('undo captures PM edits and unwinds materialization', () => {
+    const value = project();
+    const before = model.cloneState(value);
+    const sprite = model.ensurePmSprites(value)[2];
+    model.setPmPixel(sprite, 0, 0, 1);
+    const after = model.cloneState(value);
+    model.restoreState(value, before);
+    assert.equal(value.pmSprites, undefined);
+    model.restoreState(value, after);
+    assert.equal(model.pmPixel(value.pmSprites[2], 0, 0), 1);
+});
+
+test('downsamples the BULLET tile to the missile two pixels', () => {
+    const value = project();
+    const bullet = model.logicalTileDefinition(value, model.BULLET_TILE_INDEX);
+    // Glyph 1 is this tile's top-left character, 3 its bottom-left.
+    value.fontData[1 * 8 + 5] = 0b00_00_00_11; // rightmost pixel of the left half
+    value.fontData[2 * 8 + 6] = 0b11_00_00_00; // leftmost pixel of the right half
+    assert.equal(bullet.characters[0], 1);
+    const rows = model.derivePmMissile(value);
+    assert.equal(rows.length, model.PM_MISSILE_H);
+    assert.equal(rows[5], 2, 'left half lit sets bit 1');
+    assert.equal(rows[6], 1, 'right half lit sets bit 0');
+    assert.equal(rows[0], 0);
+});
+test('reads and writes missile pixels', () => {
+    const value = project();
+    const rows = model.ensurePmMissile(value);
+    model.setPmMissilePixel(rows, 0, 3, true);
+    assert.equal(model.pmMissilePixel(rows, 0, 3), 1);
+    assert.equal(model.pmMissilePixel(rows, 1, 3), 0);
+    assert.equal(rows[3], 2);
+    model.setPmMissilePixel(rows, 1, 3, true);
+    assert.equal(rows[3], 3);
+    model.setPmMissilePixel(rows, 0, 3, false);
+    assert.equal(rows[3], 1);
+});
+test('treats stored missile art as optional and validates it', () => {
+    const value = project();
+    assert.equal(model.validateProject(value).pmMissile, undefined);
+    model.ensurePmMissile(value);
+    assert.equal(model.validateProject(value).pmMissile.length, model.PM_MISSILE_H);
+    value.pmMissile[2] = 4;
+    assert.throws(() => model.validateProject(value), /pmMissile\[2\] must be 0-3/);
+});
+test('undo unwinds missile edits and materialization', () => {
+    const value = project();
+    const before = model.cloneState(value);
+    model.setPmMissilePixel(model.ensurePmMissile(value), 1, 0, true);
+    const after = model.cloneState(value);
+    model.restoreState(value, before);
+    assert.equal(value.pmMissile, undefined);
+    model.restoreState(value, after);
+    assert.equal(model.pmMissilePixel(value.pmMissile, 1, 0), 1);
+});

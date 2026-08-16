@@ -10,3 +10,8 @@ LOGIN_SERVER_PORT = 9010
 
 # How many other players this build can render at once.
 # REMOTE_PLAYER_SLOTS = 12
+
+# Draw the local player with Player/Missile Graphics (extra colors, taller
+# sprite, smooth sub-tile motion) instead of the 2x2 character sprite.
+# Needs RAM at $A000-$A7FF, which the client probes for at startup.
+# PMG_PLAYER = 1
