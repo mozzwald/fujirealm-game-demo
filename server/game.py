@@ -1369,15 +1369,28 @@ class GameState:
         player.facing = state.facing
         if player.transition_loading:
             # Paused until MAP_READY: the reported coordinates may still be
-            # the old map's. Hold the player at the transition spawn.
+            # the old map's. Hold the player at the transition spawn. The
+            # button edges are dropped rather than deferred -- they were aimed
+            # at a world that is being replaced.
+            self._discard_player_state_inputs(player, state)
             return False
         if player.respawn_correction_ticks > 0:
             if state.x != player.x or state.y != player.y:
                 player.respawn_correction_ticks -= 1
+                self._discard_player_state_inputs(player, state)
                 return False
             player.respawn_correction_ticks = 0
         world = self.world_for(player.map_id)
         if not self._player_destination_allowed(player, state.x, state.y, world):
+            # The step is refused, but the buttons on it are not: the player is
+            # still standing where the server thinks, so a fire/pickup/PvP edge
+            # in this packet has to be consumed here. Returning early used to
+            # leave the edge un-acked, and the session re-applies its last
+            # packet every tick (hybrid_server._tick keeps session.latest), so
+            # the shot went off later -- the moment the blocker moved, or on
+            # whatever the client's next accepted packet happened to be. That
+            # is the phantom "the other player moved and I fired" shot.
+            self._apply_player_state_inputs(player, state)
             return False
         if player.health < player.max_health and world.consume_herb_if_present(state.x, state.y, HERB_RESPAWN_TICKS):
             self._heal_player_from_herb(player)
@@ -1397,11 +1410,27 @@ class GameState:
         self._apply_transition_if_present(player)
         self._sync_player_entity(player)
         self.update_active_zones()
+        self._apply_player_state_inputs(player, state)
+        return True
+
+    def _apply_player_state_inputs(self, player: PlayerState, state: PlayerStatePacket) -> None:
+        """Act on the button/counter edges carried by a PLAYER_STATE.
+
+        Every exit from apply_player_state has to run either this or
+        _discard_player_state_inputs, or the edge stays pending and replays on
+        a later packet.
+        """
         self._apply_player_state_fire(player, state)
         self._apply_player_state_pickup(player, state)
         self._apply_player_state_pvp_toggle(player, state)
         player.last_buttons = state.buttons
-        return True
+
+    def _discard_player_state_inputs(self, player: PlayerState, state: PlayerStatePacket) -> None:
+        """Ack the edges without acting on them (see apply_player_state)."""
+        player.last_fire_counter = state.fire_counter
+        player.last_pickup_counter = state.pickup_counter
+        player.last_pvp_toggle_counter = state.pvp_toggle_counter
+        player.last_buttons = state.buttons
 
     def complete_bridge_repair(self, player: PlayerState) -> None:
         """Mark this player's bridge repaired: reveal the road and persist it.

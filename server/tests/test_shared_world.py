@@ -8,6 +8,7 @@ from server.game import (
     GameState,
     HUD_FLAG_PVP_ENABLED,
     MAX_PLAYER_LEVEL,
+    PLAYER_FIRE_BUTTON,
     PlayerState,
     REMOTE_PLAYER_STATE_ALIVE,
     REMOTE_PLAYER_STATE_FIRE_MASK,
@@ -390,6 +391,57 @@ class SharedWorldTest(unittest.TestCase):
             game.remote_players_near(TOKEN_B, 0, 0)[0].state & REMOTE_PLAYER_STATE_FIRE_MASK,
             0,
         )
+
+    def test_refused_step_still_consumes_the_fire_on_the_same_packet(self):
+        """A blocked move must not defer the shot it was carrying.
+
+        hybrid_server._tick re-applies session.latest every tick, so an edge
+        left un-acked here goes off later -- when the blocker steps aside, or
+        on the client's next accepted packet. Both read as a phantom shot: the
+        other player moves and you fire.
+        """
+        game, a, b = self._two_player_game_on_open_ground()
+        # A tries to walk onto B while holding fire; the step is refused.
+        blocked = state(1, b.x, b.y, facing=3, buttons=PLAYER_FIRE_BUTTON, fire=1)
+        self.assertFalse(game.apply_player_state(blocked, TOKEN_A))
+        self.assertEqual(a.shot_counter, 1)
+        self.assertEqual((a.x, a.y), (10, 16))
+
+        # Re-applying the cached packet is idempotent...
+        self.assertFalse(game.apply_player_state(blocked, TOKEN_A))
+        self.assertEqual(a.shot_counter, 1)
+
+        # ...and B stepping aside does not resurrect the shot.
+        b.x = 15
+        game._sync_player_entity(b)
+        self.assertTrue(game.apply_player_state(blocked, TOKEN_A))
+        self.assertEqual(a.shot_counter, 1)
+
+    def test_refused_step_consumes_pickup_and_pvp_edges_too(self):
+        game, a, b = self._two_player_game_on_open_ground()
+        blocked = state(1, b.x, b.y, facing=3, pickup=1, pvp=1)
+        self.assertFalse(game.apply_player_state(blocked, TOKEN_A))
+        self.assertTrue(a.pvp_enabled)
+        pickups = a.pickup_events
+        b.x = 15
+        game._sync_player_entity(b)
+        self.assertTrue(game.apply_player_state(blocked, TOKEN_A))
+        self.assertTrue(a.pvp_enabled)
+        self.assertEqual(a.pickup_events, pickups)
+
+    def test_transition_loading_drops_rather_than_defers_button_edges(self):
+        game, a, _ = self._two_player_game_on_open_ground()
+        a.transition_loading = True
+        self.assertFalse(
+            game.apply_player_state(
+                state(1, a.x, a.y, facing=3, buttons=PLAYER_FIRE_BUTTON, fire=1), TOKEN_A
+            )
+        )
+        self.assertEqual(a.shot_counter, 0)
+        a.transition_loading = False
+        # The next accepted packet carries the same counter and must stay quiet.
+        self.assertTrue(game.apply_player_state(state(2, a.x, a.y, facing=3, fire=1), TOKEN_A))
+        self.assertEqual(a.shot_counter, 0)
 
     def test_pvp_realm_transition_forces_pvp_and_rejects_toggle_off(self):
         game, a, _ = self._two_player_game()
