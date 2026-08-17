@@ -6,7 +6,16 @@ const MAP_DATA_PATH = __DIR__ . '/map_data.json';
 // Written by hybrid_server.py --positions-file. Optional: without it the map
 // falls back to the positions saved in sessions.json, which are only as fresh
 // as the last thing that marked a player dirty (level, gold, quest, logout).
-const POSITIONS_PATH = __DIR__ . '/positions.json';
+//
+// Two locations are checked because --positions-file takes whatever path you
+// give it, resolved against the server's working directory. Running
+// `make run-server SERVER_ARGS="--positions-file positions.json"` from the
+// repo root puts it beside the repo, not beside this script -- a mismatch that
+// silently looks identical to "the feature is switched off".
+const POSITIONS_PATHS = [
+    __DIR__ . '/positions.json',          // --positions-file server/positions.json
+    __DIR__ . '/../positions.json',       // --positions-file positions.json, run from the repo root
+];
 // A snapshot older than this is treated as "the server is not writing it any
 // more" rather than shown as current.
 const POSITIONS_MAX_AGE = 120;
@@ -80,15 +89,32 @@ function load_map_data(string $path): ?array
  * player dirty -- so those coordinates can be arbitrarily old, and the page
  * says so rather than pretending otherwise.
  *
- * @return array{players: array, live: bool, age: ?int}
+ * `status` is one of:
+ *   'live'    - a fresh snapshot was found; positions are current
+ *   'stale'   - a snapshot exists but has stopped updating
+ *   'missing' - no snapshot at all; the server is not writing one
+ *
+ * @return array{players: array, status: string, age: ?int, path: ?string}
  */
-function load_positions(string $live_path, string $sessions_path): array
+function load_positions(array $live_paths, string $sessions_path): array
 {
-    if (is_readable($live_path)) {
+    $stale_age = null;
+    $stale_path = null;
+    foreach ($live_paths as $live_path) {
+        if (!is_readable($live_path)) {
+            continue;
+        }
         $data = json_decode((string) file_get_contents($live_path), true);
         if (is_array($data) && isset($data['players']) && is_array($data['players'])) {
-            $age = time() - (int) ($data['generated_at'] ?? 0);
-            if ($age <= POSITIONS_MAX_AGE) {
+            $age = max(0, time() - (int) ($data['generated_at'] ?? 0));
+            if ($age > POSITIONS_MAX_AGE) {
+                // Remember it, so the page can say "the feed stopped" rather
+                // than "the feature is off" -- very different problems.
+                $stale_age = $age;
+                $stale_path = $live_path;
+                continue;
+            }
+            {
                 $players = [];
                 foreach ($data['players'] as $record) {
                     if (!is_array($record)) {
@@ -111,7 +137,12 @@ function load_positions(string $live_path, string $sessions_path): array
                         'pvp' => (bool) ($record['pvp_enabled'] ?? false),
                     ];
                 }
-                return ['players' => $players, 'live' => true, 'age' => max(0, $age)];
+                return [
+                    'players' => $players,
+                    'status' => 'live',
+                    'age' => $age,
+                    'path' => $live_path,
+                ];
             }
         }
     }
@@ -143,12 +174,17 @@ function load_positions(string $live_path, string $sessions_path): array
             ];
         }
     }
-    return ['players' => $players, 'live' => false, 'age' => null];
+    return [
+        'players' => $players,
+        'status' => $stale_path === null ? 'missing' : 'stale',
+        'age' => $stale_age,
+        'path' => $stale_path,
+    ];
 }
 
 $players = load_players(SESSIONS_PATH);
 $map_data = load_map_data(MAP_DATA_PATH);
-$positions = load_positions(POSITIONS_PATH, SESSIONS_PATH);
+$positions = load_positions(POSITIONS_PATHS, SESSIONS_PATH);
 $online_now = $positions['players'];
 ?>
 <!doctype html>
@@ -322,14 +358,29 @@ td.gold { color: var(--gold); }
         <div>
           <div class="map-title">World map</div>
           <div class="map-note">
-            <?php if (!$online_now): ?>
-              Nobody is online right now.
-            <?php elseif ($positions['live']): ?>
-              <?= count($online_now) ?> online, as of <?= (int) $positions['age'] ?>s ago. Reload for a newer snapshot.
-            <?php else: ?>
-              <?= count($online_now) ?> online, at their last <em>saved</em> position &mdash; positions are only
+            <?php if ($positions['status'] === 'live'): ?>
+              <?php if ($online_now): ?>
+                <?= count($online_now) ?> online, updated <?= (int) $positions['age'] ?>s ago. Reload for a newer snapshot.
+              <?php else: ?>
+                Nobody is online right now.
+              <?php endif; ?>
+            <?php elseif ($positions['status'] === 'stale'): ?>
+              <?php /* The feed exists but stopped: a different problem from
+                       never having enabled it, and worth saying so. */ ?>
+              Live positions have stopped updating &mdash; last written
+              <?= (int) floor(($positions['age'] ?? 0) / 60) ?>m ago. Is the server still
+              running with <code>--positions-file</code>?
+              <?php if ($online_now): ?>
+                Showing <?= count($online_now) ?> at their last <em>saved</em> position.
+              <?php endif; ?>
+            <?php elseif ($online_now): ?>
+              <?= count($online_now) ?> online, at their last <em>saved</em> position &mdash; those are only
               written when a player levels, banks gold, advances a quest or logs out.
-              Run the server with <code>--positions-file positions.json</code> for live ones.
+              For live positions run the server with
+              <code>--positions-file <?= htmlspecialchars(POSITIONS_PATHS[0], ENT_QUOTES, 'UTF-8') ?></code>
+              (this page reads that exact path).
+            <?php else: ?>
+              Nobody is online right now.
             <?php endif; ?>
           </div>
         </div>
