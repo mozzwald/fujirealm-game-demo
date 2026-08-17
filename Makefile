@@ -61,8 +61,10 @@ test-editor:
 
 # The game client bootstraps over TCP, then drops the connection and reconnects
 # in realtime mode -- only hybrid_server handles that second phase.
+# SERVER_ARGS passes extra flags through, e.g. the stats-page position feed:
+#   make run-server SERVER_ARGS="--positions-file server/positions.json"
 run-server:
-	python3 -m server.hybrid_server --port $(HYBRID_SERVER_PORT) --debug
+	python3 -m server.hybrid_server --port $(HYBRID_SERVER_PORT) --debug $(SERVER_ARGS)
 
 run-login-server:
 	python3 -m server.login_server --port $(LOGIN_SERVER_PORT) --debug

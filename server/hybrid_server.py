@@ -10,8 +10,11 @@ PLAYER_STATE is honored; all authenticated players share one GameState.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import selectors
 import socket
+import tempfile
 import time
 import traceback
 from collections import deque
@@ -143,6 +146,9 @@ KIND_REALTIME = "realtime"
 
 AUTH_TIMEOUT = 5.0
 PLAYER_IDLE_TIMEOUT = 35.0
+# How often --positions-file is rewritten. The web map is a page-load snapshot,
+# not a live feed, so a few seconds of lag is invisible to a reader.
+DEFAULT_POSITIONS_INTERVAL = 5.0
 REMOTE_REFRESH_INTERVAL = 0.5
 # How long a finished fill may wait for the client's WINDOW_COMMIT before
 # the server abandons it and starts a fresh transaction (which discards the
@@ -464,6 +470,8 @@ class FujiRealmHybridServer:
         lobby_client_url: str = DEFAULT_LOBBY_CLIENT_URL,
         lobby_timeout: float = 2.0,
         lobby_publisher: LobbyPublisher | None = None,
+        positions_file: str | None = None,
+        positions_interval: float = DEFAULT_POSITIONS_INTERVAL,
     ) -> None:
         self.host = host
         self.port = port
@@ -484,6 +492,13 @@ class FujiRealmHybridServer:
         self.auth_timeout = auth_timeout
         self.player_idle_timeout = player_idle_timeout
         self.session_store = session_store or SessionStore()
+        # Phase: live position snapshot for the web map. Off unless a path is
+        # given. sessions.json only records a position when something else
+        # marks the player dirty (level, gold, quest, disconnect), so it is not
+        # a usable source for "where is everyone right now".
+        self.positions_file = positions_file
+        self.positions_interval = max(1.0, positions_interval)
+        self._positions_next_write = 0.0
         self.pvp_bot_tokens: set[int] = set(
             range(test_pvp_bot_token_base, test_pvp_bot_token_base + max(0, test_pvp_bots))
         )
@@ -718,6 +733,16 @@ class FujiRealmHybridServer:
                         next_tick += tick_interval
                         if next_tick <= now:
                             next_tick = now + tick_interval
+                    if self.positions_file and now >= self._positions_next_write:
+                        self._positions_next_write = now + self.positions_interval
+                        try:
+                            self._write_positions()
+                        except Exception:
+                            # A full disk or a bad path must never stop the
+                            # game; the map view simply goes stale.
+                            self._log_error(
+                                f"positions write failed:\n{traceback.format_exc()}"
+                            )
             finally:
                 self._shutdown_in_progress = True
                 for session in list(self.sessions.values()):
@@ -752,6 +777,55 @@ class FujiRealmHybridServer:
             self.game.queue_server_message(f"{name} has left the realm!", MSG_PLAYER_LEFT)
             if not self._shutdown_in_progress:
                 self._publish_lobby("online")
+
+    def _write_positions(self) -> None:
+        """Dump every attached player's live position for the web map.
+
+        Written atomically (temp file + rename) so a reader never sees a half
+        written file, and small enough that doing it every few seconds costs
+        nothing next to the tick loop. Only players currently attached to a
+        realtime session appear: this file answers "who is online and where",
+        and nothing else.
+        """
+        players = []
+        for token, session in self.realtime_by_token.items():
+            player = self.game.players.get(token)
+            if player is None or session is None:
+                continue
+            if token in self.pvp_bot_tokens:
+                continue  # test bots are not people
+            players.append(
+                {
+                    "username": self.game.player_display_name(token),
+                    "map_id": player.map_id,
+                    "x": player.x,
+                    "y": player.y,
+                    "level": player.level,
+                    "health": player.health,
+                    "max_health": player.max_health,
+                    "gold": player.gold,
+                    "pvp_kills": player.pvp_kills,
+                    "pvp_enabled": bool(player.pvp_enabled),
+                }
+            )
+        payload = {
+            "generated_at": int(time.time()),
+            "interval": self.positions_interval,
+            "players": players,
+        }
+        path = os.fspath(self.positions_file)
+        directory = os.path.dirname(path) or "."
+        handle, temp_path = tempfile.mkstemp(dir=directory, prefix=".positions-", suffix=".json")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream)
+            os.replace(temp_path, path)
+        except BaseException:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
 
     def _record_auth_timeout(self, session: ClientSession) -> None:
         host = session.addr[0]
@@ -1684,6 +1758,17 @@ def main() -> int:
     parser.add_argument("--test-pvp-bot-fire-cooldown", type=float, default=2.0)
     parser.add_argument("--test-pvp-bots-no-fire", action="store_true")
     parser.add_argument("--test-pvp-bot-token-base", type=lambda value: int(value, 0), default=DEFAULT_PVP_BOT_TOKEN_BASE)
+    parser.add_argument(
+        "--positions-file",
+        default=None,
+        help="write a live who-is-online-and-where snapshot here for the web map",
+    )
+    parser.add_argument(
+        "--positions-interval",
+        type=float,
+        default=DEFAULT_POSITIONS_INTERVAL,
+        help="seconds between position snapshots (default %(default)s)",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--debug-errors-only", action="store_true")
     parser.add_argument("--lobby-enabled", action="store_true")
@@ -1716,6 +1801,8 @@ def main() -> int:
         client_burst_bytes=args.client_burst_bytes,
         visible_remotes=args.visible_remotes,
         player_idle_timeout=args.player_idle_timeout,
+        positions_file=args.positions_file,
+        positions_interval=args.positions_interval,
         test_pvp_bots=args.test_pvp_bots,
         test_pvp_bot_move_every=args.test_pvp_bot_move_every,
         test_pvp_bot_mode=args.test_pvp_bot_mode,

@@ -23,9 +23,11 @@ lynx-client/*.cap
 # Release staging
 release/
 
-# Live server state. sessions.json holds player identities
+# Live server state. sessions.json holds player identities; positions.json is
+# the who-is-online-and-where snapshot for the stats map (--positions-file).
 server/sessions.json
 server/sessions.json.bak-*
+server/positions.json
 
 # Python
 __pycache__/

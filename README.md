@@ -126,6 +126,34 @@ make run-smoke-server        # accepts FujiNet REGISTER, echoes a probe byte
 make run-bootstrap-server    # byte-stream-only server, bootstrap protocol alone
 ```
 
+## Stats page
+
+`server/stats.php` is a single self-contained page: a PvP leaderboard read from  
+`sessions.json`, and a world map showing where online players are.
+
+The map draws one coloured pixel per tile from `server/map_data.json`, which is  
+generated from the server's own world builders so the page can never disagree  
+with what players walk on:
+
+```sh
+python3 tools/export_map_json.py    # after editing maps/*.csv and re-importing
+```
+
+Player positions want one server flag. `sessions.json` only records a position  
+when something marks the player dirty (a level, gold, a quest step, logout), so  
+it is not a usable answer to "where is everyone right now":
+
+```sh
+make run-server SERVER_ARGS="--positions-file server/positions.json"
+python3 -m server.hybrid_server --positions-file server/positions.json
+```
+
+That writes a small snapshot every 5 seconds (`--positions-interval`), atomically,  
+and the page prefers it. Without it the map still works, but it plots last-saved  
+positions and says so. `positions.json` is runtime state and is git-ignored.
+
+Only online players are drawn — never enemies or NPCs.
+
 ## Test
 
 ```sh
