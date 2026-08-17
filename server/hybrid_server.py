@@ -835,6 +835,7 @@ class FujiRealmHybridServer:
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 json.dump(payload, stream)
+            os.chmod(temp_path, 0o644)
             os.replace(temp_path, path)
             self._positions_error = None
         except BaseException:
