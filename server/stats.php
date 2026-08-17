@@ -3,22 +3,8 @@ declare(strict_types=1);
 
 const SESSIONS_PATH = __DIR__ . '/sessions.json';
 const MAP_DATA_PATH = __DIR__ . '/map_data.json';
-// Written by hybrid_server.py --positions-file. Optional: without it the map
-// falls back to the positions saved in sessions.json, which are only as fresh
-// as the last thing that marked a player dirty (level, gold, quest, logout).
-//
-// Two locations are checked because --positions-file takes whatever path you
-// give it, resolved against the server's working directory. Running
-// `make run-server SERVER_ARGS="--positions-file positions.json"` from the
-// repo root puts it beside the repo, not beside this script -- a mismatch that
-// silently looks identical to "the feature is switched off".
-const POSITIONS_PATHS = [
-    __DIR__ . '/positions.json',          // --positions-file server/positions.json
-    __DIR__ . '/../positions.json',       // --positions-file positions.json, run from the repo root
-];
-// A snapshot older than this is treated as "the server is not writing it any
-// more" rather than shown as current.
-const POSITIONS_MAX_AGE = 120;
+// Written by hybrid_server.py --positions-file.
+const POSITIONS_PATH = __DIR__ . '/positions.json';
 
 function clamp_int($value, int $min, int $max): int
 {
@@ -82,110 +68,49 @@ function load_map_data(string $path): ?array
 }
 
 /**
- * Where every online player is right now.
+ * Who is online and where, straight from the file the server writes.
  *
- * Prefers the live snapshot the server writes with --positions-file. Falls
- * back to sessions.json, whose x/y is only written when something marks the
- * player dirty -- so those coordinates can be arbitrarily old, and the page
- * says so rather than pretending otherwise.
- *
- * `status` is one of:
- *   'live'    - a fresh snapshot was found; positions are current
- *   'stale'   - a snapshot exists but has stopped updating
- *   'missing' - no snapshot at all; the server is not writing one
- *
- * @return array{players: array, status: string, age: ?int, path: ?string}
+ * Opened read-only, read once, closed. The server writes it atomically
+ * (temp file + rename), so a read either sees the previous snapshot or the
+ * new one, never a partial file.
  */
-function load_positions(array $live_paths, string $sessions_path): array
+function load_positions(string $path): array
 {
-    $stale_age = null;
-    $stale_path = null;
-    foreach ($live_paths as $live_path) {
-        if (!is_readable($live_path)) {
+    if (!is_readable($path)) {
+        return [];
+    }
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data) || !is_array($data['players'] ?? null)) {
+        return [];
+    }
+    $players = [];
+    foreach ($data['players'] as $record) {
+        if (!is_array($record)) {
             continue;
         }
-        $data = json_decode((string) file_get_contents($live_path), true);
-        if (is_array($data) && isset($data['players']) && is_array($data['players'])) {
-            $age = max(0, time() - (int) ($data['generated_at'] ?? 0));
-            if ($age > POSITIONS_MAX_AGE) {
-                // Remember it, so the page can say "the feed stopped" rather
-                // than "the feature is off" -- very different problems.
-                $stale_age = $age;
-                $stale_path = $live_path;
-                continue;
-            }
-            {
-                $players = [];
-                foreach ($data['players'] as $record) {
-                    if (!is_array($record)) {
-                        continue;
-                    }
-                    $username = trim((string) ($record['username'] ?? ''));
-                    if ($username === '') {
-                        continue;
-                    }
-                    $players[] = [
-                        'username' => $username,
-                        'map_id' => clamp_int($record['map_id'] ?? 0, 0, 255),
-                        'x' => clamp_int($record['x'] ?? 0, 0, 255),
-                        'y' => clamp_int($record['y'] ?? 0, 0, 255),
-                        'level' => clamp_int($record['level'] ?? 1, 1, 99),
-                        'health' => clamp_int($record['health'] ?? 0, 0, 999),
-                        'max_health' => clamp_int($record['max_health'] ?? 0, 0, 999),
-                        'gold' => clamp_int($record['gold'] ?? 0, 0, 9999),
-                        'kills' => clamp_int($record['pvp_kills'] ?? 0, 0, 9999),
-                        'pvp' => (bool) ($record['pvp_enabled'] ?? false),
-                    ];
-                }
-                return [
-                    'players' => $players,
-                    'status' => 'live',
-                    'age' => $age,
-                    'path' => $live_path,
-                ];
-            }
+        $username = trim((string) ($record['username'] ?? ''));
+        if ($username === '') {
+            continue;
         }
+        $players[] = [
+            'username' => $username,
+            'map_id' => clamp_int($record['map_id'] ?? 0, 0, 255),
+            'x' => clamp_int($record['x'] ?? 0, 0, 255),
+            'y' => clamp_int($record['y'] ?? 0, 0, 255),
+            'level' => clamp_int($record['level'] ?? 1, 1, 99),
+            'health' => clamp_int($record['health'] ?? 0, 0, 999),
+            'max_health' => clamp_int($record['max_health'] ?? 0, 0, 999),
+            'gold' => clamp_int($record['gold'] ?? 0, 0, 9999),
+            'kills' => clamp_int($record['pvp_kills'] ?? 0, 0, 9999),
+            'pvp' => (bool) ($record['pvp_enabled'] ?? false),
+        ];
     }
-
-    // Fallback: last saved position of whoever sessions.json thinks is online.
-    $players = [];
-    if (is_readable($sessions_path)) {
-        $data = json_decode((string) file_get_contents($sessions_path), true);
-        foreach (($data['sessions'] ?? []) as $record) {
-            if (!is_array($record) || !($record['online'] ?? false)) {
-                continue;
-            }
-            $state = $record['player_state'] ?? null;
-            $username = trim((string) ($record['username'] ?? ''));
-            if ($username === '' || !is_array($state)) {
-                continue;
-            }
-            $players[] = [
-                'username' => $username,
-                'map_id' => clamp_int($state['map_id'] ?? 0, 0, 255),
-                'x' => clamp_int($state['x'] ?? 0, 0, 255),
-                'y' => clamp_int($state['y'] ?? 0, 0, 255),
-                'level' => clamp_int($state['level'] ?? 1, 1, 99),
-                'health' => clamp_int($state['health'] ?? 0, 0, 999),
-                'max_health' => clamp_int($state['max_health'] ?? 0, 0, 999),
-                'gold' => clamp_int($state['gold'] ?? 0, 0, 9999),
-                'kills' => clamp_int($state['pvp_kills'] ?? 0, 0, 9999),
-                'pvp' => (bool) ($state['pvp_enabled'] ?? false),
-            ];
-        }
-    }
-    return [
-        'players' => $players,
-        'status' => $stale_path === null ? 'missing' : 'stale',
-        'age' => $stale_age,
-        'path' => $stale_path,
-    ];
+    return $players;
 }
 
 $players = load_players(SESSIONS_PATH);
 $map_data = load_map_data(MAP_DATA_PATH);
-$positions = load_positions(POSITIONS_PATHS, SESSIONS_PATH);
-$online_now = $positions['players'];
+$online_now = load_positions(POSITIONS_PATH);
 ?>
 <!doctype html>
 <html lang="en">
@@ -358,30 +283,8 @@ td.gold { color: var(--gold); }
         <div>
           <div class="map-title">World map</div>
           <div class="map-note">
-            <?php if ($positions['status'] === 'live'): ?>
-              <?php if ($online_now): ?>
-                <?= count($online_now) ?> online, updated <?= (int) $positions['age'] ?>s ago. Reload for a newer snapshot.
-              <?php else: ?>
-                Nobody is online right now.
-              <?php endif; ?>
-            <?php elseif ($positions['status'] === 'stale'): ?>
-              <?php /* The feed exists but stopped: a different problem from
-                       never having enabled it, and worth saying so. */ ?>
-              Live positions have stopped updating &mdash; last written
-              <?= (int) floor(($positions['age'] ?? 0) / 60) ?>m ago. Is the server still
-              running with <code>--positions-file</code>?
-              <?php if ($online_now): ?>
-                Showing <?= count($online_now) ?> at their last <em>saved</em> position.
-              <?php endif; ?>
-            <?php elseif ($online_now): ?>
-              <?= count($online_now) ?> online, at their last <em>saved</em> position &mdash; those are only
-              written when a player levels, banks gold, advances a quest or logs out.
-              For live positions run the server with
-              <code>--positions-file <?= htmlspecialchars(POSITIONS_PATHS[0], ENT_QUOTES, 'UTF-8') ?></code>
-              (this page reads that exact path).
-            <?php else: ?>
-              Nobody is online right now.
-            <?php endif; ?>
+            <?= count($online_now) ?> online
+          </div>
           </div>
         </div>
         <div class="map-tabs" id="map-tabs"></div>

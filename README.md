@@ -139,18 +139,25 @@ with what players walk on:
 python3 tools/export_map_json.py    # after editing maps/*.csv and re-importing
 ```
 
-Player positions want one server flag. `sessions.json` only records a position  
-when something marks the player dirty (a level, gold, a quest step, logout), so  
-it is not a usable answer to "where is everyone right now":
+Player positions come from a file the server writes. `sessions.json` only  
+records a position when something marks the player dirty (a level, gold, a  
+quest step, logout), so it is not a usable answer to "where is everyone right  
+now":
 
 ```sh
 make run-server SERVER_ARGS="--positions-file server/positions.json"
 python3 -m server.hybrid_server --positions-file server/positions.json
 ```
 
-That writes a small snapshot every 5 seconds (`--positions-interval`), atomically,  
-and the page prefers it. Without it the map still works, but it plots last-saved  
-positions and says so. `positions.json` is runtime state and is git-ignored.
+That writes a small snapshot every 5 seconds (`--positions-interval`),  
+atomically, so the page never reads a half-written file. The page opens it  
+read-only, reads it once and closes it; with no file it simply shows nobody  
+online. A write failure (bad path, unwritable directory) prints once to stderr  
+even without `--debug`. `positions.json` is runtime state and is git-ignored.
+
+Use an **absolute path** unless you are certain of the server's working  
+directory, and point it at the file the page reads (`server/positions.json`,  
+or whatever your web root symlinks to).
 
 Only online players are drawn — never enemies or NPCs.
 

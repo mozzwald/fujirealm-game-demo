@@ -14,6 +14,7 @@ import json
 import os
 import selectors
 import socket
+import sys
 import tempfile
 import time
 import traceback
@@ -499,6 +500,7 @@ class FujiRealmHybridServer:
         self.positions_file = positions_file
         self.positions_interval = max(1.0, positions_interval)
         self._positions_next_write = 0.0
+        self._positions_error: str | None = None
         self.pvp_bot_tokens: set[int] = set(
             range(test_pvp_bot_token_base, test_pvp_bot_token_base + max(0, test_pvp_bots))
         )
@@ -737,12 +739,26 @@ class FujiRealmHybridServer:
                         self._positions_next_write = now + self.positions_interval
                         try:
                             self._write_positions()
-                        except Exception:
-                            # A full disk or a bad path must never stop the
-                            # game; the map view simply goes stale.
-                            self._log_error(
-                                f"positions write failed:\n{traceback.format_exc()}"
-                            )
+                        except Exception as exc:
+                            # Never stop the game for this, but never fail
+                            # silently either: _log_error only prints under
+                            # --debug, and a production server that cannot
+                            # write the file would otherwise say nothing at
+                            # all. Printed once per distinct error so a
+                            # permanent failure does not spam the log.
+                            # Key the repeat check on the failure kind, not
+                            # on str(exc): the temp file's name is random, so
+                            # the text differs every time and a permanent
+                            # failure would print on every interval.
+                            kind = type(exc).__name__
+                            if kind != self._positions_error:
+                                self._positions_error = kind
+                                print(
+                                    f"positions write failed "
+                                    f"({self.positions_file}): {kind}: {exc}",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
             finally:
                 self._shutdown_in_progress = True
                 for session in list(self.sessions.values()):
@@ -813,13 +829,14 @@ class FujiRealmHybridServer:
             "interval": self.positions_interval,
             "players": players,
         }
-        path = os.fspath(self.positions_file)
+        path = os.path.abspath(os.fspath(self.positions_file))
         directory = os.path.dirname(path) or "."
         handle, temp_path = tempfile.mkstemp(dir=directory, prefix=".positions-", suffix=".json")
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 json.dump(payload, stream)
             os.replace(temp_path, path)
+            self._positions_error = None
         except BaseException:
             try:
                 os.unlink(temp_path)
