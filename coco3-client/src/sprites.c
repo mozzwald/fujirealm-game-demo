@@ -3,14 +3,14 @@
 #include "art.h"
 #include <cmoc.h>
 
-unsigned char sprite_anim;
+unsigned char sprite_anim = 0;
 struct sprite spr_next[MAX_SPRITES];
-unsigned char spr_next_n;
+unsigned char spr_next_n = 0;
 struct sprite spr_prev[MAX_SPRITES];
-unsigned char spr_prev_n;
+unsigned char spr_prev_n = 0;
 unsigned char dirty_x[MAX_DIRTY];
 unsigned char dirty_y[MAX_DIRTY];
-unsigned char dirty_n;
+unsigned char dirty_n = 0;
 
 /* Species (rt_state.h RTS_KIND_*) -> entity image; kind_alt is the second
  * animation frame, 0 for none. The Lynx client's enemy_art tables. */

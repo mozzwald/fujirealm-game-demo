@@ -61,7 +61,8 @@ static void show_help(const struct ovl_api *api)
     api->text(6, 11, "P - Toggle PvP");
     api->text(6, 12, "V - Walk speed");
     api->text(6, 13, "F1 - RGB/composite");
-    api->text(6, 14, "BREAK - Exit to BASIC");
+    api->text(6, 14, "F2 - Sound on/off");
+    api->text(6, 15, "BREAK - Exit to BASIC");
     api->text(4, 21, "Press ENTER or fire to continue");
     api->show();
     wait_close(api);

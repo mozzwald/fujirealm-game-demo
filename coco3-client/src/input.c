@@ -8,9 +8,9 @@
 #define KEY_ENTER 0x0D
 #define KEY_BREAK 0x03
 
-static unsigned char caps_on;
-static unsigned char flag_seen;
-static unsigned char flag_seen_set;
+static unsigned char caps_on = 0;
+static unsigned char flag_seen = 0;
+static unsigned char flag_seen_set = 0;
 
 /* Folds a SHIFT-0 into caps_on: the ROM flips $011A and swallows the key.
  * Only changes to the flag matter, never its value. */

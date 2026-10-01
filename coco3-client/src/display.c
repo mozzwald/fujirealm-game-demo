@@ -10,7 +10,7 @@
 #define FUJINET_APP_ID 2
 #define APPKEY_DISPLAY_TARGET 2
 
-static unsigned char current_target;
+static unsigned char current_target = DISPLAY_RGB;
 
 unsigned char display_target_saved(void)
 {

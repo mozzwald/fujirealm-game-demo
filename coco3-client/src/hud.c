@@ -11,7 +11,10 @@
 
 #define HUD_TEXT_COLOR 3  /* white in every palette */
 #define HUD_HEART_COLOR 11 /* red in every palette */
+/* Characters past the ROM font, drawn from special[]. */
 #define HUD_HEART 0x80
+#define HUD_SOUND_ON 0x81
+#define HUD_SOUND_OFF 0x82
 
 /* Atari HUD line-1 layout (fujirealm.asm HUD_*_X). */
 #define HEART_COUNT 6
@@ -33,8 +36,13 @@
 #define QUEST_DONE_TIMEOUT_TICKS 600
 
 static const unsigned char text_y[HUD_ROWS] = { 3, 13, 23 };
-static const unsigned char heart_glyph[GLYPH_BYTES] = {
-    0x6C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38, 0x10, 0x00
+static const unsigned char special[3][GLYPH_BYTES] = {
+    { 0x6C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38, 0x10, 0x00 }, /* heart */
+    { 0x0C, 0x0E, 0x0B, 0x08, 0x08, 0x78, 0xF8, 0x70 }, /* eighth note */
+    { 0x8C, 0x4E, 0x2B, 0x18, 0x08, 0x7C, 0xFA, 0x71 }, /* the note, struck */
+};
+static const unsigned char special_color[3] = {
+    HUD_HEART_COLOR, HUD_TEXT_COLOR, HUD_HEART_COLOR
 };
 
 static char shown[HUD_ROWS][HUD_COLS];
@@ -48,6 +56,7 @@ static const char *note_text;
 static unsigned note_clk;
 static unsigned char note_on;
 static unsigned char status_walk;
+static unsigned char status_sound;
 static unsigned quest_clk;
 
 void gfx_copy8(unsigned char *dst, const unsigned char *src,
@@ -91,9 +100,9 @@ static void glyph_draw(unsigned char *dst, unsigned char c)
     unsigned char fg = HUD_TEXT_COLOR;
     unsigned char r, g;
 
-    if (c == HUD_HEART) {
-        memcpy(glyph, heart_glyph, GLYPH_BYTES);
-        fg = HUD_HEART_COLOR;
+    if (c >= HUD_HEART && c <= HUD_SOUND_OFF) {
+        memcpy(glyph, special[c - HUD_HEART], GLYPH_BYTES);
+        fg = special_color[c - HUD_HEART];
     } else {
         if (c < 32 || c > 127) {
             c = ' ';
@@ -211,6 +220,10 @@ static unsigned char put_stats(void)
     line[WALK_X + 1] = (char)('0' + status_walk);
     if (note_on) {
         memcpy(&line[NOTE_X], note_text, 3);
+    } else if (status_sound) {
+        line[NOTE_X] = (char)HUD_SOUND_ON;
+    } else {
+        line[NOTE_X] = (char)HUD_SOUND_OFF;
     }
     return put_line(ROW_STATS, line);
 }
@@ -221,6 +234,14 @@ void hud_note(const char *text, unsigned now)
     note_clk = now;
     note_on = 1;
     stats_valid = 0;
+}
+
+void hud_set_sound(unsigned char on)
+{
+    if (on != status_sound) {
+        status_sound = on;
+        stats_valid = 0;
+    }
 }
 
 void hud_set_walk(unsigned char walk)
@@ -246,6 +267,7 @@ void hud_init(void)
     stats_valid = 0;
     message_active = 0;
     quest_hidden = 0;
+    note_on = 0;
     gime_window_playfield();
 }
 

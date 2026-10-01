@@ -276,12 +276,15 @@ unsigned char live_connect(const char *host, unsigned long token)
     fire_counter = 0;
     live_pickup_counter = 0;
     live_pvp_counter = 0;
+    live_dlg_decline = 0;
     current_map_id = MAP_OVERWORLD;
     resync_pending = 0;
     rx_enc_len = 0;
     tx_len = 0;
     last_poll = getTimer();
     last_rx = last_poll;
+    commit_at = last_poll;
+    resync_at = last_poll;
 
     net_unit = network_unit(spec);
     if (network_open(spec, 12, 0) != FN_ERR_OK ||

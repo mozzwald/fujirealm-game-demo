@@ -32,6 +32,9 @@ the endpoint is baked in at build time; copy `config.mk.example` to
 overrides it at runtime. The first build clones and builds
 fujinet-lib-experimental into `_cache/`.
 
+The sound effects are defined in `tools/sound_gen.py`; `make sndtest` builds
+`SNDTEST.dsk`, a boot disk that plays each one.
+
 The art is drawn in `tools/artgen`; `./artgen.py --help` shows how it writes
 the tileset and `src/palette.c`. `tools/tile-editor/coco.html` can touch it
 up, but regenerating overwrites those edits.
@@ -53,4 +56,5 @@ display type on first run, logs in (or resumes), then loads the game,
 | P | Toggle PvP |
 | V | Walk speed |
 | F1 | RGB / composite palette |
+| F2 | Sound on / off (a note at the end of the HUD's top line) |
 | BREAK | Exit to BASIC; in a dialogue, decline |

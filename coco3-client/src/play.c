@@ -12,6 +12,7 @@
 #include "ovl_api.h"
 #include "art.h"
 #include "rt_state.h"
+#include "sound.h"
 #include <coco.h>
 #include <cmoc.h>
 
@@ -41,16 +42,22 @@ static const unsigned char walk_ticks[WALK_PRESETS] = { 6, 8, 10, 12, 15 };
 #define BULLET_TICKS 3
 #define WORLD_WAIT_TICKS 1200
 
-static const unsigned char black_clut[16];
-static unsigned char wait_clut[16]; /* black but for the text color */
-static unsigned char f1_was_down;
+static const unsigned char black_clut[16] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+/* Black but for the text color. */
+static unsigned char wait_clut[16] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+static unsigned char f1_was_down = 0;
+static unsigned char f2_was_down = 0;
 static unsigned char g_is_512k;
 static unsigned char g_display_target;
 static unsigned char g_palette_id;
 static unsigned char g_hud_owed;
 static unsigned char g_border;
 static unsigned char g_hw;          /* hardware-scroll renderer active */
-static unsigned char window_key_was; /* OVL_* + 1 of the key held, or 0 */
+static unsigned char window_key_was = 0; /* OVL_* + 1 of the key held, or 0 */
 static unsigned g_ovl_send_clk;
 static struct ovl_handoff g_handoff;
 static unsigned char g_items_saved;
@@ -75,6 +82,31 @@ static void check_display_toggle(void)
                  getTimer());
     }
     f1_was_down = down;
+}
+
+/* F2 turns sound on and off; the HUD's note shows which. */
+static void check_sound_toggle(void)
+{
+    unsigned char down = isKeyPressed(KEY_PROBE_F2, KEY_BIT_F2) ? 1 : 0;
+
+    if (down && !f2_was_down) {
+        sound_on ^= 1;
+        pref_sound_save(sound_on);
+        hud_set_sound(sound_on);
+    }
+    f2_was_down = down;
+}
+
+/* The server's MESSAGE ids that sound (Atari sfx_message_map). */
+static void message_sound(unsigned char id)
+{
+    if (id == 5 || id == 15) {         /* beaver or goblin killed */
+        sound_play(SND_KILL);
+    } else if (id == 10) {             /* level up */
+        sound_play(SND_LEVELUP);
+    } else if (id >= 11 && id <= 13) { /* died; respawned */
+        sound_play(SND_DEATH);
+    }
 }
 
 static void set_border(unsigned char code)
@@ -114,6 +146,7 @@ static void check_exit(void)
         return;
     }
     live_close();
+    sound_shutdown();
     if (g_hw) {
         hw_leave();
     }
@@ -314,7 +347,7 @@ static void update_items_seen(void)
  * (the Atari's) would end before a frame showed it. */
 static void update_hit_flash(void)
 {
-    static unsigned char last_health;
+    static unsigned char last_health = 0;
     unsigned char i;
 
     for (i = 0; i < live_game.beaver_count; ++i) {
@@ -324,6 +357,7 @@ static void update_hit_flash(void)
     }
     if (live_game.health < last_health) {
         player_hit_timer = RTS_HIT_FLASH_FRAMES;
+        sound_play(SND_HURT);
     } else if (player_hit_timer != 0) {
         --player_hit_timer;
     }
@@ -411,6 +445,7 @@ static void game_loop(void)
             v_was_down = v_down;
         }
         check_display_toggle();
+        check_sound_toggle();
         check_exit();
         check_window_keys();
         check_server_windows();
@@ -428,6 +463,7 @@ static void game_loop(void)
 
         if (fire_now) {
             player_fire(aim);
+            sound_play(SND_SHOOT);
         }
         if ((unsigned)(now - bullet_clk) >= BULLET_TICKS) {
             bullet_clk = now;
@@ -460,6 +496,9 @@ static void game_loop(void)
 
         update_status(walk_idx);
         hud_new = 0;
+        if (live_game.message_dirty) {
+            message_sound(live_game.message_id);
+        }
         if (hud_update(&live_game, now)) {
             if (g_hw) {
                 hw_hud_refresh();
@@ -508,6 +547,7 @@ static void show_text(unsigned char col, const char *msg)
 
 static void fail(const char *msg)
 {
+    sound_shutdown();
     *(unsigned char *)0xFF98 = 0; /* graphics mode off */
     show_text(0, msg);
     putchar('\r');
@@ -573,6 +613,9 @@ int main(void)
     player_snap(live_game.player_x, live_game.player_y);
     player_update_view();
     update_status(DEFAULT_WALK);
+    sound_on = pref_sound_load();
+    hud_set_sound(sound_on);
+    sound_init();
     hud_update(&live_game, getTimer());
     live_terrain_reset = 0;
     live_game.tile_changed = 0;

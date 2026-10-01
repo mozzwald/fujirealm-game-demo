@@ -12,6 +12,7 @@
 PRODUCT = FRLOGIN
 PLAY = FRPLAY
 VIEW = ARTVIEW
+SNDT = SNDTEST
 DISK = FUJIRLM3
 
 CMOC ?= cmoc
@@ -51,15 +52,17 @@ SETUP_SRC = src/setup.c src/runm.c src/gime.c src/display.c \
 PLAY_SRC = src/play.c src/gime.c src/palette.c src/ram.c \
 	src/display.c src/rt_state.c src/terrain.c \
 	src/live.c src/player.c src/controls.c src/prefs.c src/hud.c \
-	src/redraw.c src/sprites.c src/hwscroll.c
+	src/sound.c src/sound_data.c src/redraw.c src/sprites.c src/hwscroll.c
 # The art viewer (make artview, not part of all), on its own boot disk: every
 # image with its use, and a sample scene.
 VIEW_SRC = tools/artview/artview.c src/gime.c src/palette.c src/art_image.c
+# The sound test (make sndtest, not part of all), on its own boot disk.
+SNDT_SRC = tools/sndtest/sndtest.c src/sound.c src/sound_data.c
 HEADERS = src/gime.h src/tiles.h src/palette.h src/ram.h \
 	src/display.h src/host.h src/net.h src/input.h src/bf_proto.h \
 	src/login.h src/identity.h src/runm.h src/rt_state.h src/terrain.h \
 	src/live.h src/player.h src/controls.h src/hwscroll.h src/prefs.h \
-	src/hud.h src/ovl_api.h src/art.h \
+	src/hud.h src/ovl_api.h src/art.h src/sound.h \
 	src/server_host_default.h
 
 # src/rt_state.c/.h started as lynx-client's realtime v3 codec. rt_crc16
@@ -94,8 +97,10 @@ PLAY_BIN = $(PLAY).bin
 VIEW_BIN = $(VIEW).bin
 DSK = $(DISK).dsk
 VIEW_DSK = $(VIEW).dsk
+SNDT_BIN = $(SNDT).bin
+SNDT_DSK = $(SNDT).dsk
 
-.PHONY: all disk artview clean size
+.PHONY: all disk artview sndtest clean size
 
 all: disk
 
@@ -107,6 +112,12 @@ $(PLAY_BIN): $(PLAY_SRC) $(HEADERS)
 
 $(VIEW_BIN): $(VIEW_SRC) $(HEADERS)
 	$(CMOC) $(CFLAGS) -Isrc --org=$(ORG) -o $@ $(VIEW_SRC)
+
+src/sound_data.c: tools/sound_gen.py
+	./tools/sound_gen.py $@
+
+$(SNDT_BIN): $(SNDT_SRC) src/sound.h src/gime.h
+	$(CMOC) $(CFLAGS) -Isrc --org=$(ORG) -o $@ $(SNDT_SRC)
 
 # The overlay (ovl_api.h) is linked into the game's renderer region, so it is
 # built after the game, and FRLOGIN carries its image.
@@ -152,6 +163,16 @@ $(VIEW_DSK): $(VIEW_BIN)
 	$(DECB) copy -t -0 view_autoexec.bas $@,AUTOEXEC.BAS
 	@$(DECB) dir $@
 
+sndtest: $(SNDT_DSK)
+
+$(SNDT_DSK): $(SNDT_BIN)
+	rm -f $@ sndtest_autoexec.bas
+	@printf '10 RUNM"%s"\n' $(SNDT) > sndtest_autoexec.bas
+	$(DECB) dskini $@
+	$(DECB) copy -b -2 $(SNDT_BIN) $@,$(SNDT).BIN
+	$(DECB) copy -t -0 sndtest_autoexec.bas $@,AUTOEXEC.BAS
+	@$(DECB) dir $@
+
 # How far each program's program_end reached (limit $(LIMIT)).
 size: $(SETUP_BIN) $(PLAY_BIN)
 	@for p in $(PRODUCT) $(PLAY); do \
@@ -159,5 +180,5 @@ size: $(SETUP_BIN) $(PLAY_BIN)
 	done
 
 clean:
-	rm -f $(SETUP_BIN) $(PLAY_BIN) $(VIEW_BIN) $(DSK) $(VIEW_DSK) view_autoexec.bas AUTOEXEC.BAS *.map *.asm *.lst *.link *.o *.s src/*.o src/server_host_default.h \
-		$(OVL).raw src/ovl_image.c src/art_image.c
+	rm -f $(SETUP_BIN) $(PLAY_BIN) $(VIEW_BIN) $(SNDT_BIN) $(DSK) $(VIEW_DSK) $(SNDT_DSK) view_autoexec.bas sndtest_autoexec.bas AUTOEXEC.BAS *.map *.asm *.lst *.link *.o *.s src/*.o src/server_host_default.h \
+		$(OVL).raw src/ovl_image.c src/art_image.c src/sound_data.c

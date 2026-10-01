@@ -9,7 +9,9 @@ extern const unsigned char art_image[];
 
 void art_store(void)
 {
-    static const unsigned char black[16];
+    static const unsigned char black[16] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
     unsigned ofs;
 
     gime_set_palette(black); /* 128K: this overwrites the screen shown now */

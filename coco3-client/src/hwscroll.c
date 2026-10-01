@@ -222,27 +222,34 @@ static void draw_cell_marks(unsigned char x, unsigned char y)
 }
 
 /* Shows the hidden ring at (view_x, view_y), at vertical blank: the GIME
- * latches the start address at the top of the frame. */
+ * latches the start address at the top of the frame. Only IRQ is masked, so
+ * the sound FIRQ keeps playing; it also ends a sync, hence the wait for the
+ * PIA's field-sync flag. */
 static void set_scroll(unsigned view_x, unsigned view_y)
 {
     unsigned start = (view_y % RING_ROWS) * TILE_H;
     unsigned video = ((unsigned)cur->base << 10) + start * 32;
     unsigned char hoff = (unsigned char)((view_x & 31) * 4);
 
-    INTS_OFF();
-    asm { lda $FF92 } /* acknowledge a pending GIME IRQ */
-    asm { sync }
+    asm {
+        pshs cc
+        orcc #$10
+        lda $FF92 ; acknowledge a pending GIME IRQ
+scroll_wait
+        sync
+        tst $FF03
+        bpl scroll_wait
+    }
     *(unsigned *)0xFF9D = video;
     *(unsigned char *)0xFF9F = (unsigned char)(0x80 | hoff);
-    INTS_RESTORE();
+    asm { puls cc }
 }
 
 void hw_init(void)
 {
+    memset(rings, 0, sizeof(rings));
     rings[0].base = RING_A_BLOCK;
     rings[1].base = RING_B_BLOCK;
-    rings[0].have = 0;
-    rings[1].have = 0;
     front = 0;
     *(unsigned *)0xFF9D = (unsigned)RING_A_BLOCK << 10;
     *(unsigned char *)0xFF9F = 0x80;

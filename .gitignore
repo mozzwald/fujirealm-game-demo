@@ -32,9 +32,11 @@ coco3-client/*.s
 coco3-client/src/*.o
 coco3-client/AUTOEXEC.BAS
 coco3-client/view_autoexec.bas
+coco3-client/sndtest_autoexec.bas
 coco3-client/src/server_host_default.h
 coco3-client/src/ovl_image.c
 coco3-client/src/art_image.c
+coco3-client/src/sound_data.c
 coco3-client/*.raw
 # fnlib.py's fujinet-lib-experimental checkout + build (cloned fresh, not
 # vendored -- see coco3-client/Makefile)

@@ -43,10 +43,15 @@
  * $FFDE -- the interrupt handlers would then run from the ROMs, and on a real
  * CoCo 3 that locked up or crashed the machine. */
 
-#define TASK0() asm("clr", "$FF91")
+/* $FF91 bit 5 keeps the GIME timer at 3.58 MHz for the sound (sound.c). */
+#define TASK0() \
+    do { \
+        asm("ldb", "#$20"); \
+        asm("stb", "$FF91"); \
+    } while (0)
 #define TASK1() \
     do { \
-        asm("ldb", "#1"); \
+        asm("ldb", "#$21"); \
         asm("stb", "$FF91"); \
     } while (0)
 

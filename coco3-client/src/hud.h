@@ -22,6 +22,9 @@ unsigned char hud_update(struct rt_state *st, unsigned now);
 /* Stats-line walk speed digit. */
 void hud_set_walk(unsigned char walk);
 
+/* Stats-line sound marker, where a note (hud_note) does not cover it. */
+void hud_set_sound(unsigned char on);
+
 /* Shows a 3-character note at the right end of the stats line for about two
  * seconds. text must stay valid. */
 void hud_note(const char *text, unsigned now);

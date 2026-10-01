@@ -20,12 +20,12 @@ unsigned char player_y;
 unsigned view_x;
 unsigned view_y;
 unsigned char player_send_pending;
-unsigned char player_hit_timer;
-unsigned char player_anim;
+unsigned char player_hit_timer = 0;
+unsigned char player_anim = 0;
 
 static unsigned char predicted_pending;
-static unsigned predicted_seq;
-static unsigned last_state_seq;
+static unsigned predicted_seq = 0;
+static unsigned last_state_seq = 0;
 static unsigned char corr_pending;
 static unsigned char corr_x;
 static unsigned char corr_y;

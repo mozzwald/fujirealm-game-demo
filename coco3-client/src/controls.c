@@ -1,13 +1,14 @@
 #include "controls.h"
 #include "rt_state.h"
+#include "gime.h"
 #include <coco.h>
 
 /* Analog axes read 0-63 with center near 31. */
 #define JOY_LOW 15
 #define JOY_HIGH 47
 
-static unsigned char left_joy_selected;
-static unsigned char right_joy_selected;
+static unsigned char left_joy_selected = 0;
+static unsigned char right_joy_selected = 0;
 
 static unsigned char key_dir(void)
 {
@@ -68,8 +69,8 @@ static unsigned char stick_dir(unsigned char h, unsigned char v)
 #define EDGE_INTERACT 0x02
 #define EDGE_PVP 0x04
 
-static unsigned char keys_down; /* EDGE_* held at the last poll */
-static unsigned char key_edges; /* EDGE_* pressed since the last read */
+static unsigned char keys_down = 0; /* EDGE_* held at the last poll */
+static unsigned char key_edges = 0; /* EDGE_* pressed since the last read */
 static unsigned char dir_down = CTL_NONE;  /* key direction at the last poll */
 static unsigned char dir_latch = CTL_NONE; /* first new one since the last read */
 
@@ -134,6 +135,20 @@ void controls_poll(void)
     dir_down = dir;
 }
 
+/* Joystick reads use the DAC and its mux, so the sound FIRQ is held off and
+ * the mux is put back on the DAC after. */
+static const unsigned char *read_sticks(void)
+{
+    const unsigned char *pos;
+
+    INTS_OFF();
+    pos = readJoystickPositions();
+    *(unsigned char *)0xFF01 &= 0xF7;
+    *(unsigned char *)0xFF03 &= 0xF7;
+    INTS_RESTORE();
+    return pos;
+}
+
 void controls_read(struct controls *c)
 {
     unsigned char buttons = readJoystickButtons();
@@ -142,10 +157,10 @@ void controls_read(struct controls *c)
 
     controls_poll();
     if (left_joy_selected) {
-        pos = readJoystickPositions();
+        pos = read_sticks();
         joy_dir = stick_dir(pos[JOYSTK_LEFT_HORIZ], pos[JOYSTK_LEFT_VERT]);
     } else if (right_joy_selected) {
-        pos = readJoystickPositions();
+        pos = read_sticks();
         joy_dir = stick_dir(pos[JOYSTK_RIGHT_HORIZ], pos[JOYSTK_RIGHT_VERT]);
     }
 

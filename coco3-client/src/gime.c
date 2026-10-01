@@ -87,7 +87,7 @@ void gime_init_mode(void)
 
     asm { sync } /* wait for vsync before switching modes */
 
-    *(unsigned char *)0xFF90 = 0x4C; /* INIT0: clear CoCo-1/2-compatible bit */
+    *(unsigned char *)0xFF90 = 0x5C; /* INIT0: not CoCo-1/2 mode; FIRQ on */
     *(unsigned char *)0xFF98 = 0x80; /* VMODE: graphics mode on */
     *(unsigned char *)0xFF99 = 0x7E; /* VRES: 225 lines, 160 B/row, 16 colors */
     *(unsigned char *)0xFF9A = 0;    /* border: palette index 0 */
