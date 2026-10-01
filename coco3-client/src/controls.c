@@ -70,6 +70,8 @@ static unsigned char stick_dir(unsigned char h, unsigned char v)
 
 static unsigned char keys_down; /* EDGE_* held at the last poll */
 static unsigned char key_edges; /* EDGE_* pressed since the last read */
+static unsigned char dir_down = CTL_NONE;  /* key direction at the last poll */
+static unsigned char dir_latch = CTL_NONE; /* first new one since the last read */
 
 /* A held joystick button shares its PIA line with a keyboard row, so every
  * key on that row reads as pressed (right button 1: @ A-G). */
@@ -94,6 +96,7 @@ void controls_poll(void)
     unsigned char buttons = readJoystickButtons();
     unsigned char keys = (buttons & 0x0F) == 0x0F;
     unsigned char down = 0;
+    unsigned char dir = CTL_NONE;
 
     /* A press on an unselected stick only selects it: counting it as held
      * already means it fires nothing until released and pressed again.
@@ -122,6 +125,13 @@ void controls_poll(void)
     }
     key_edges |= (unsigned char)(down & ~keys_down);
     keys_down = down;
+    if (keys) {
+        dir = key_dir();
+    }
+    if (dir != dir_down && dir_latch == CTL_NONE) {
+        dir_latch = dir;
+    }
+    dir_down = dir;
 }
 
 void controls_read(struct controls *c)
@@ -144,8 +154,12 @@ void controls_read(struct controls *c)
         c->dir = key_dir();
     }
     if (c->dir == CTL_NONE) {
+        c->dir = dir_latch;
+    }
+    if (c->dir == CTL_NONE) {
         c->dir = joy_dir;
     }
+    dir_latch = CTL_NONE;
     c->fire = (key_edges & EDGE_FIRE) != 0;
     c->interact = (key_edges & EDGE_INTERACT) != 0;
     c->pvp = (key_edges & EDGE_PVP) != 0;

@@ -83,20 +83,18 @@ static void set_border(unsigned char code)
     *(unsigned char *)0xFF9A = code;
 }
 
-/* Brings the screen up to date with the renderer in use (mode: HW_PRESENT_*;
- * the redraw renderer repaints everything regardless). */
+/* Brings the screen up to date with the renderer in use (mode: HW_PRESENT_*). */
 static void present(unsigned char mode)
 {
     if (g_hw) {
         hw_present(live_terrain.tiles, live_terrain.origin_x,
-                   live_terrain.origin_y, view_x, view_y, player_x, player_y,
-                   &live_game, mode);
+                   live_terrain.origin_y, view_x, view_y, &live_game, mode);
         return;
     }
     draw_world(live_terrain.tiles, live_terrain.origin_x, live_terrain.origin_y,
                (unsigned char)(view_x - live_terrain.origin_x),
-               (unsigned char)(view_y - live_terrain.origin_y), player_x,
-               player_y, &live_game);
+               (unsigned char)(view_y - live_terrain.origin_y), &live_game,
+               mode == HW_PRESENT_FULL);
     if (g_hud_owed != 0) {
         hud_blit(0);
         --g_hud_owed;
@@ -133,11 +131,11 @@ static void check_exit(void)
 
 /* The renderers' code is saved at startup and put back after each overlay
  * window. On 128K, block 6 is BASIC's 80-column screen, so the save goes in
- * the HUD block between the image and the terrain fill buffer, which only
- * fits redraw.c: hwscroll.c is never used on 128K. */
+ * the HUD block between the image and the terrain fill buffer, which fits
+ * all but hwscroll.c, never used on 128K (tools/ovl_region.py checks). */
 #define SAVE_BLOCK_512K 6
 #define SAVE_BLOCK_128K 7
-#define SAVE_OFS_128K 0x1500
+#define SAVE_OFS_128K (HUD_IMAGE_STRIDE * HUD_LINES)
 #define COPY_CHUNK 512
 
 static unsigned region_len(void)
@@ -338,62 +336,9 @@ static void update_status(unsigned char walk_idx)
     hud_set_walk((unsigned char)(WALK_PRESETS - walk_idx));
 }
 
-/* Cheap fingerprint of everything the playfield shows, so a redraw happens
- * only when something visible changed. */
-static unsigned world_signature(void)
-{
-    unsigned h = player_x;
-    unsigned char i;
-    unsigned char k;
-    unsigned char animated = 0;
-
-    h = h * 33 + player_y;
-    h = h * 33 + (player_hit_timer & 1);
-    h = h * 33 + live_facing;
-    h = h * 33 + player_anim;
-    h = h * 33 + view_x;
-    h = h * 33 + view_y;
-    h = h * 33 + live_terrain.origin_x;
-    h = h * 33 + live_terrain.origin_y;
-    for (i = 0; i < live_game.beaver_count; ++i) {
-        h = h * 33 + live_game.beavers[i].x;
-        h = h * 33 + live_game.beavers[i].y;
-        h = h * 33 + live_game.beavers[i].hp;
-        k = live_game.beavers[i].kind;
-        h = h * 33 + k;
-        h = h * 33 + (live_game.beavers[i].hit_timer & 1);
-        if (k == RTS_KIND_BAT || k == RTS_KIND_SLIME ||
-            k == RTS_KIND_WILHELM_WORKING) {
-            animated = 1;
-        }
-    }
-    if (animated) {
-        h = h * 33 + sprite_anim;
-    }
-    for (i = 0; i < live_game.remote_count; ++i) {
-        h = h * 33 + live_game.remotes[i].x;
-        h = h * 33 + live_game.remotes[i].y;
-        h = h * 33 + live_game.remotes[i].state;
-        h = h * 33 + live_game.remotes[i].facing;
-        h = h * 33 + live_game.remotes[i].anim;
-    }
-    for (i = 0; i < live_game.item_count; ++i) {
-        h = h * 33 + live_game.items[i].x;
-        h = h * 33 + live_game.items[i].y;
-        h = h * 33 + live_game.items[i].item_id;
-    }
-    for (i = 0; i < RTS_MAX_TRACERS; ++i) {
-        if (live_game.tracers[i].active) {
-            h = h * 33 + live_game.tracers[i].x + 1;
-            h = h * 33 + live_game.tracers[i].y;
-        }
-    }
-    return h;
-}
-
 /* The live game: input, prediction, sends, receive, camera, redraw -- in
  * the order the Atari client runs them. Never returns. */
-static void game_loop(unsigned first_sig)
+static void game_loop(void)
 {
     struct controls ctl;
     unsigned char repeat_dir = CTL_NONE;
@@ -410,9 +355,10 @@ static void game_loop(unsigned first_sig)
     unsigned send_clk = getTimer();
     unsigned bullet_clk = getTimer();
     unsigned now;
-    unsigned sig;
-    unsigned last_sig = first_sig;
-    unsigned char have_sig = 1;
+    unsigned shown_vx = view_x;
+    unsigned shown_vy = view_y;
+    unsigned char have_frame = 1;
+    unsigned char changed;
     unsigned char mode;
     unsigned char hud_new;
 
@@ -494,7 +440,7 @@ static void game_loop(unsigned first_sig)
                 (unsigned)(player_y - view_y) >= VIEW_ROWS) {
                 player_snap(player_x, player_y);
             }
-            have_sig = 0;
+            have_frame = 0;
         }
         player_update_view();
         update_hit_flash();
@@ -526,9 +472,12 @@ static void game_loop(unsigned first_sig)
         if (live_map_loading) {
             continue;
         }
-        sig = world_signature();
-        if (!have_sig || sig != last_sig || live_game.tile_changed || hud_new) {
-            if (!have_sig) {
+        /* Present only when something on screen changed. */
+        changed = sprites_update(&live_game, view_x, view_y, player_x,
+                                 player_y, live_facing);
+        if (!have_frame || changed || view_x != shown_vx ||
+            view_y != shown_vy || live_game.tile_changed || hud_new) {
+            if (!have_frame) {
                 mode = HW_PRESENT_FULL;
             } else if (live_game.tile_changed) {
                 mode = HW_PRESENT_TILES;
@@ -536,8 +485,9 @@ static void game_loop(unsigned first_sig)
                 mode = HW_PRESENT_MOVE;
             }
             present(mode);
-            have_sig = 1;
-            last_sig = sig;
+            have_frame = 1;
+            shown_vx = view_x;
+            shown_vy = view_y;
             live_game.tile_changed = 0;
             live_game.changed_n = 0;
         }
@@ -627,13 +577,14 @@ int main(void)
     live_terrain_reset = 0;
     live_game.tile_changed = 0;
     live_game.changed_n = 0;
+    sprites_update(&live_game, view_x, view_y, player_x, player_y, live_facing);
     present(HW_PRESENT_FULL);
     if (live_map_palette < PALETTE_ID_COUNT) {
         g_palette_id = live_map_palette;
     }
     apply_palette();
     set_border(g_is_512k ? BORDER_512K : BORDER_128K);
-    game_loop(world_signature());
+    game_loop();
 
     return 0;
 }

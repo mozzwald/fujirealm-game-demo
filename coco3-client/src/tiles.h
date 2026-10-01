@@ -18,12 +18,33 @@ struct sprite {
 /* Creature animation phase (0 or 1), set by the game loop. */
 extern unsigned char sprite_anim;
 
-/* Fills out with what is in the view whose top-left is world (vx, vy), in
- * drawing order, and returns the count. (px, py) and facing are the local
- * player's. In redraw.c (game only), as are the rest. */
-unsigned char sprites_build(struct sprite *out, const struct rt_state *st,
-                            unsigned vx, unsigned vy, unsigned char px,
-                            unsigned char py, unsigned char facing);
+/* This frame's sprites, in drawing order, and the previous frame's. */
+extern struct sprite spr_next[MAX_SPRITES];
+extern unsigned char spr_next_n;
+extern struct sprite spr_prev[MAX_SPRITES];
+extern unsigned char spr_prev_n;
+
+/* Moves spr_next to spr_prev and rebuilds it with what is in the view whose
+ * top-left is world (vx, vy); (px, py) and facing are the local player's.
+ * Returns 1 if it changed. */
+unsigned char sprites_update(const struct rt_state *st, unsigned vx,
+                             unsigned vy, unsigned char px, unsigned char py,
+                             unsigned char facing);
+
+/* Cells a renderer must repaint. The caller zeroes dirty_n. */
+#define MAX_DIRTY 24
+extern unsigned char dirty_x[MAX_DIRTY];
+extern unsigned char dirty_y[MAX_DIRTY];
+extern unsigned char dirty_n;
+
+/* Adds cell (x, y) once. Returns 0 when the list is full. */
+unsigned char dirty_add(unsigned char x, unsigned char y);
+
+/* Adds the cells where the sprites in was differ from spr_next. Returns 0
+ * when the list is full. */
+unsigned char dirty_sprites(const struct sprite *was, unsigned char nwas);
+
+/* The above are in sprites.c, the rest in redraw.c (game only). */
 
 /* Copies a 16x16 art image (8-byte rows) to dst, rows stride bytes apart.
  * Inside the GFX bracket. */
@@ -39,11 +60,11 @@ void put_sprite(unsigned char *dst, const unsigned char *art, unsigned char img,
 
 /* Draws the live playfield: a PLAYFIELD_COLS x PLAYFIELD_ROWS viewport whose
  * top-left is (cam_x, cam_y) inside the terrain cache (origin_x/origin_y
- * are the cache's world origin) from the art block, with the sprites
- * sprites_build() lists. Each tile row brackets itself with
- * GFX_ENTER()/GFX_LEAVE(). */
+ * are the cache's world origin) from the art block, with spr_next. While the
+ * view stays put, only cells whose sprites or terrain (st's changed cells)
+ * changed are redrawn; full != 0 redraws everything. */
 void draw_world(const unsigned char *terrain, unsigned origin_x,
                 unsigned origin_y, unsigned char cam_x, unsigned char cam_y,
-                unsigned char px, unsigned char py, const struct rt_state *st);
+                const struct rt_state *st, unsigned char full);
 
 #endif

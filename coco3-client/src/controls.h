@@ -1,7 +1,8 @@
 #ifndef CONTROLS_H
 #define CONTROLS_H
 
-/* No direction held. Otherwise dir is an RTS_FACE_* code (rt_state.h). */
+/* No direction. Otherwise dir is an RTS_FACE_* code (rt_state.h): held now,
+ * or a key tapped since the previous read. */
 #define CTL_NONE 0xFF
 
 struct controls {
@@ -24,9 +25,9 @@ struct controls {
  * noise and would otherwise walk the player around on its own. */
 void controls_read(struct controls *c);
 
-/* Latches button presses for the next controls_read(). Called between rows
- * of long redraws: the CoCo keyboard has no latch, so a tap shorter than one
- * loop pass is otherwise lost. */
+/* Latches button and direction key presses for the next controls_read().
+ * Called between redraw rows and network calls: the CoCo keyboard has no
+ * latch, so a tap shorter than one loop pass is otherwise lost. */
 void controls_poll(void);
 
 /* The selected stick's button-1 bit in readJoystickButtons() (active low),

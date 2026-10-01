@@ -45,7 +45,7 @@ struct terrain_cache {
  * fill is never drawn. Its tiles are assembled in TERRAIN_FILL_BLOCK at
  * TERRAIN_FILL_OFS, past the HUD image, to spare low RAM. */
 #define TERRAIN_FILL_BLOCK 7
-#define TERRAIN_FILL_OFS 0x1C00
+#define TERRAIN_FILL_OFS 0x1D00 /* ends at the block end */
 
 struct terrain_fill {
     unsigned char active;

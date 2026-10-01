@@ -17,9 +17,7 @@
 
 /* One request/response round trip: opens LOGIN_SERVER_PORT, sends a $BF
  * frame of req_type/req_payload, waits (bounded) for one $BF frame back,
- * closes either way. Same over-ask discipline as net.c's throughput test:
- * always request the fixed max, trust the read's return value, never
- * bytes_waiting. */
+ * closes either way. */
 static unsigned char login_roundtrip(const char *host, unsigned char req_type,
                                      const unsigned char *req_payload,
                                      unsigned char req_payload_len,

@@ -28,11 +28,10 @@ void hw_hud_refresh(void);
 #define HW_PRESENT_FULL 1  /* repaint everything: first frame, terrain replaced */
 #define HW_PRESENT_TILES 2 /* also repaint terrain cells that changed */
 
-/* Brings the screen up to date. view_x/view_y is the viewport's top-left in
- * world tiles, (px, py) the local player. */
+/* Brings the screen up to date with spr_next (tiles.h). view_x/view_y is the
+ * viewport's top-left in world tiles. */
 void hw_present(const unsigned char *terrain, unsigned origin_x,
                 unsigned origin_y, unsigned view_x, unsigned view_y,
-                unsigned char px, unsigned char py, const struct rt_state *st,
-                unsigned char mode);
+                const struct rt_state *st, unsigned char mode);
 
 #endif

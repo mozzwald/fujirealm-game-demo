@@ -7,7 +7,6 @@
 #include "controls.h"
 #include "ovl_api.h"
 #include "art.h"
-#include "live.h"
 #include <coco.h>
 #include <cmoc.h>
 
@@ -22,7 +21,6 @@
 #define MIRROR_LINES (MIRROR_ROWS * TILE_H) /* 224 */
 #define FRAME_HUD_TOP PLAYFIELD_LINES
 
-#define MAX_DIRTY 24
 #define MAX_STALE 4
 
 struct cell {
@@ -48,11 +46,6 @@ struct ring {
 static struct ring rings[2];
 static struct ring *cur;             /* the hidden ring being painted */
 static unsigned char front;          /* index of the ring on screen */
-static struct sprite next[MAX_SPRITES];
-static struct cell dirty[MAX_DIRTY];
-static unsigned char nnext;
-static unsigned char ndirty;
-static unsigned char dirty_overflow;
 
 /* Each 8K block holds 32 lines, and a tile row (16 lines) never straddles a
  * block, so painting a tile or a line needs exactly one window mapping. */
@@ -216,46 +209,14 @@ static void draw_mark(const struct sprite *m)
     }
 }
 
-static unsigned char has_mark(const struct sprite *list, unsigned char n,
-                              const struct sprite *m)
-{
-    unsigned char i;
-
-    for (i = 0; i < n; ++i) {
-        if (list[i].x == m->x && list[i].y == m->y &&
-            list[i].img == m->img) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static void add_dirty(unsigned char x, unsigned char y)
-{
-    unsigned char i;
-
-    for (i = 0; i < ndirty; ++i) {
-        if (dirty[i].x == x && dirty[i].y == y) {
-            return;
-        }
-    }
-    if (ndirty >= MAX_DIRTY) {
-        dirty_overflow = 1;
-        return;
-    }
-    dirty[ndirty].x = x;
-    dirty[ndirty].y = y;
-    ++ndirty;
-}
-
 /* Draws every marker of this frame that sits on cell (x, y), in list order. */
 static void draw_cell_marks(unsigned char x, unsigned char y)
 {
     unsigned char i;
 
-    for (i = 0; i < nnext; ++i) {
-        if (next[i].x == x && next[i].y == y) {
-            draw_mark(&next[i]);
+    for (i = 0; i < spr_next_n; ++i) {
+        if (spr_next[i].x == x && spr_next[i].y == y) {
+            draw_mark(&spr_next[i]);
         }
     }
 }
@@ -332,12 +293,13 @@ static void add_stale(struct ring *r, const struct rt_state *st)
     }
 }
 
-/* Brings the hidden ring up to the view (vx, vy) with this frame's markers
- * in next[], then shows it. */
+/* Brings the hidden ring up to the view (vx, vy) with spr_next, then shows
+ * it. */
 static void paint_ring(const unsigned char *terrain, unsigned ox, unsigned oy,
                        unsigned vx, unsigned vy, unsigned char full)
 {
     unsigned char i;
+    unsigned char ok;
     int ddx;
     int ddy;
     unsigned char x;
@@ -352,28 +314,18 @@ static void paint_ring(const unsigned char *terrain, unsigned ox, unsigned oy,
         ddx >= VIEW_COLS || ddx <= -VIEW_COLS ||
         ddy >= VIEW_ROWS || ddy <= -VIEW_ROWS) {
         paint_view(terrain, ox, oy, vx, vy, 0);
-        for (i = 0; i < nnext; ++i) {
-            draw_mark(&next[i]);
+        for (i = 0; i < spr_next_n; ++i) {
+            draw_mark(&spr_next[i]);
         }
         paint_hud(vx, vy, 1);
     } else {
-        ndirty = 0;
-        dirty_overflow = 0;
-        for (i = 0; i < cur->nmarks; ++i) {
-            if (!has_mark(next, nnext, &cur->marks[i])) {
-                add_dirty(cur->marks[i].x, cur->marks[i].y);
-            }
-        }
-        for (i = 0; i < nnext; ++i) {
-            if (!has_mark(cur->marks, cur->nmarks, &next[i])) {
-                add_dirty(next[i].x, next[i].y);
-            }
-        }
+        dirty_n = 0;
+        ok = dirty_sprites(cur->marks, cur->nmarks);
         paint_view(terrain, ox, oy, vx, vy, 1);
-        for (i = 0; i < cur->nstale; ++i) {
-            add_dirty(cur->stale[i].x, cur->stale[i].y);
+        for (i = 0; ok && i < cur->nstale; ++i) {
+            ok = dirty_add(cur->stale[i].x, cur->stale[i].y);
         }
-        if (dirty_overflow) {
+        if (!ok) {
             for (i = 0; i < cur->nstale; ++i) {
                 x = cur->stale[i].x;
                 y = cur->stale[i].y;
@@ -388,13 +340,13 @@ static void paint_ring(const unsigned char *terrain, unsigned ox, unsigned oy,
                     paint_tile(x, y, tile_id(terrain, ox, oy, x, y));
                 }
             }
-            for (i = 0; i < nnext; ++i) {
-                draw_mark(&next[i]);
+            for (i = 0; i < spr_next_n; ++i) {
+                draw_mark(&spr_next[i]);
             }
         } else {
-            for (i = 0; i < ndirty; ++i) {
-                x = dirty[i].x;
-                y = dirty[i].y;
+            for (i = 0; i < dirty_n; ++i) {
+                x = dirty_x[i];
+                y = dirty_y[i];
                 if ((unsigned)x - vx < VIEW_COLS && (unsigned)y - vy < VIEW_ROWS) {
                     paint_tile(x, y, tile_id(terrain, ox, oy, x, y));
                     draw_cell_marks(x, y);
@@ -414,22 +366,21 @@ static void paint_ring(const unsigned char *terrain, unsigned ox, unsigned oy,
     cur->hud_hoff = hoff;
     cur->hud_stale = 0;
     cur->nstale = 0;
-    memcpy(cur->marks, next, sizeof(struct sprite) * nnext);
-    cur->nmarks = nnext;
+    memcpy(cur->marks, spr_next, sizeof(struct sprite) * spr_next_n);
+    cur->nmarks = spr_next_n;
 
     set_scroll(vx, vy);
     front ^= 1;
 }
 
 void hw_present(const unsigned char *terrain, unsigned ox, unsigned oy,
-                unsigned vx, unsigned vy, unsigned char px, unsigned char py,
-                const struct rt_state *st, unsigned char mode)
+                unsigned vx, unsigned vy, const struct rt_state *st,
+                unsigned char mode)
 {
     if (mode == HW_PRESENT_TILES) {
         add_stale(&rings[0], st);
         add_stale(&rings[1], st);
     }
-    nnext = sprites_build(next, st, vx, vy, px, py, live_facing);
 
     paint_ring(terrain, ox, oy, vx, vy, mode == HW_PRESENT_FULL);
     /* A full repaint does both rings, so the next step is not a full one. */

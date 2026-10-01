@@ -45,12 +45,13 @@ SETUP_SRC = src/setup.c src/runm.c src/gime.c src/display.c \
 	src/hostedit.c src/net.c src/input.c src/bf_proto.c src/login.c \
 	src/identity.c src/itemseen.c src/ovlstore.c src/ovl_image.c \
 	src/art_image.c
-# redraw.c and hwscroll.c must stay last: their code is the overlay region
-# (see ovl_api.h), and CMOC lays code out in command-line order.
+# redraw.c, sprites.c and hwscroll.c must stay last, in that order: their
+# code is the overlay region (see ovl_api.h), and CMOC lays code out in
+# command-line order.
 PLAY_SRC = src/play.c src/gime.c src/palette.c src/ram.c \
 	src/display.c src/rt_state.c src/terrain.c \
 	src/live.c src/player.c src/controls.c src/prefs.c src/hud.c \
-	src/redraw.c src/hwscroll.c
+	src/redraw.c src/sprites.c src/hwscroll.c
 # The art viewer (make artview, not part of all), on its own boot disk: every
 # image with its use, and a sample scene.
 VIEW_SRC = tools/artview/artview.c src/gime.c src/palette.c src/art_image.c
@@ -113,6 +114,7 @@ OVL = FROVL
 OVL_SRC = src/ovl_help.c src/ovl_dialogue.c
 
 $(OVL).raw: $(OVL_SRC) src/ovl_api.h src/rt_state.h $(PLAY_BIN)
+	./tools/ovl_region.py check128k $(PLAY).map
 	$(CMOC) --coco --no-relocate --raw --intermediate -nodefaultlibs \
 		--org=$$(./tools/ovl_region.py start $(PLAY).map) \
 		-o $@ $(OVL_SRC) -lcmoc-std-ecb

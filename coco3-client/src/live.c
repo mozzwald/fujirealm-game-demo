@@ -1,12 +1,14 @@
 #include "live.h"
 #include "player.h"
+#include "controls.h"
 #include "server_host_default.h"
 #include <coco.h>
 #include <cmoc.h>
 #include <fujinet-network.h>
+#include <fujinet-bus.h>
 
-/* Fixed over-ask, sized for the largest burst (a 24-row fill): reading less
- * than the firmware has buffered desyncs DriveWire (see net.c). */
+/* Sized for the largest burst (a 24-row fill). A read must not ask for more
+ * than is waiting: dwread waits for every byte it asks for. */
 #define LIVE_RX_MAX 512
 #define LIVE_MAX_READS 8
 #define LIVE_TX_CAP 192
@@ -47,6 +49,7 @@ static unsigned resync_at;
 static unsigned commit_at;
 static unsigned last_poll;
 static unsigned last_rx;
+static unsigned char net_unit;
 
 static unsigned char rx_buf[LIVE_RX_MAX];
 static unsigned char rx_enc[LIVE_ENC_CAP];
@@ -59,6 +62,7 @@ static unsigned char wire[RTS_MAX_RAW + 2];
 static void flush(void)
 {
     if (tx_len != 0) {
+        controls_poll();
         network_write(spec, tx_buf, tx_len);
         tx_len = 0;
     }
@@ -279,6 +283,7 @@ unsigned char live_connect(const char *host, unsigned long token)
     last_poll = getTimer();
     last_rx = last_poll;
 
+    net_unit = network_unit(spec);
     if (network_open(spec, 12, 0) != FN_ERR_OK ||
         network_write(spec, preamble, 4) != FN_ERR_OK ||
         network_write(spec, wire, rt_build_auth(wire, token)) != FN_ERR_OK) {
@@ -295,11 +300,9 @@ void live_close(void)
 
 void live_pump(void)
 {
-    uint16_t bytes_waiting;
-    uint8_t conn_status;
-    uint8_t err;
-    int16_t got;
-    int16_t i;
+    NetworkStatus st;
+    uint16_t got;
+    uint16_t i;
     unsigned char reads = 0;
     unsigned now = getTimer();
 
@@ -308,22 +311,26 @@ void live_pump(void)
     }
     last_poll = now;
 
+    /* network_read_nb's status and read without its second status call: each
+     * call costs several DriveWire round trips. A short read ends the pass. */
     while (reads < LIVE_MAX_READS) {
-        if (network_status(spec, &bytes_waiting, &conn_status, &err) !=
-            FN_ERR_OK) {
+        if (network_unit_status(net_unit, &st) != FN_ERR_OK || st.avail == 0) {
             break;
         }
-        if (bytes_waiting == 0) {
-            break;
+        controls_poll();
+        got = LIVE_RX_MAX;
+        if (st.avail < LIVE_RX_MAX) {
+            got = st.avail;
         }
-        got = network_read_nb(spec, rx_buf, LIVE_RX_MAX);
-        if (got <= 0) {
-            break;
-        }
+        network_bus_read((unsigned char)(FUJI_DEVICEID_NETWORK + net_unit - 1),
+                         rx_buf, got);
         ++reads;
         last_rx = now;
         for (i = 0; i < got; ++i) {
             feed_byte(rx_buf[i]);
+        }
+        if (got < LIVE_RX_MAX) {
+            break;
         }
     }
 

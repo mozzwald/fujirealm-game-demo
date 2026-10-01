@@ -11,7 +11,7 @@ data.
 
 - A CoCo 3 with **128K or 512K**. With 512K the GIME scrolls the screen in
   hardware, so movement is noticeably smoother; with 128K there is no room
-  for that, and the whole view is redrawn with each step.
+  for that, and the whole view is redrawn whenever it scrolls.
 - A FujiNet for the CoCo (bitbanger or Becker-style), or XRoar with a
   FujiNet-PC.
 - An RGB or composite monitor; the palette is chosen on first run and F1
