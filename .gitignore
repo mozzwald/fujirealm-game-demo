@@ -61,3 +61,6 @@ __pycache__/
 ref/
 .claude/
 
+
+# Amiga client build outputs
+amiga-client/build/

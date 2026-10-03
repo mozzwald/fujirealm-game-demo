@@ -1,10 +1,10 @@
 # FujiRealm
 
 A small server-authoritative multiplayer RPG for retro hardware, playing over  
-[FujiNet](https://fujinet.online). One Python server and four clients: **Atari**  
+[FujiNet](https://fujinet.online). One Python server and five clients: **Atari**  
 **8-bit** in 6502 assembly, **Atari Lynx** in C, **Intellivision** in IntyBASIC,  
-and **Tandy CoCo 3** in C, all speaking the same wire protocol to the same  
-live world.
+**Tandy CoCo 3** and **Amiga** in C, all speaking the same wire protocol to the  
+same live world.
 
 If you want to build a networked game for retro hardware  
 and you are staring at a blank file wondering how any of this fits together,  
@@ -39,6 +39,14 @@ licensed precisely so you can lift whatever is useful.
      │    IntyBASIC     │             │     CMOC / C     │
      │    GRAM cards    │             │  GIME scrolling  │
      └──────────────────┘             └──────────────────┘
+     ┌──────────────────┐
+     │   FujiNet NIO    │
+     └────────┬─────────┘
+     ┌────────┴─────────┐
+     │      Amiga       │
+     │  m68k gcc / C    │
+     │  Blitter masks   │
+     └──────────────────┘
 ```
 
 ## What's in the box
@@ -50,7 +58,8 @@ licensed precisely so you can lift whatever is useful.
 | `lynx-client/`   | Atari Lynx client. cc65 C with a little assembly, Suzy sprite renderer, talks to FujiNet over ComLynx.                                        |
 | `intv-client/`   | Intellivision client. IntyBASIC, GRAM card tiles, talks to the Intellivision FujiNet (PiRTO II) through its mailbox. See its README.          |
 | `coco3-client/`  | Tandy CoCo 3 client. CMOC C, GIME hardware scrolling, FujiNet over DriveWire. See its README.                                                 |
-| `tools/`         | Shared build and art tooling, plus `tile-editor/`, the browser tile editor for all four clients' art.                                        |
+| `amiga-client/`  | Amiga client (Workbench 1.3+, 68000). m68k gcc C, shares the Lynx client's protocol code, talks to FujiNet over FujiNet NIO. |
+| `tools/`         | Shared build and art tooling, plus `tile-editor/`, the browser tile editor for the clients' art.                                             |
 | `maps/`          | The world as editable CSV grids. `tools/import_map_csv.py` compiles them into the server.                                                     |
 | `docs/`          | The wire protocol, the Atari memory map, and the shared tile-id contract.                                                                     |
 
@@ -67,15 +76,16 @@ per-machine, and the differences are the interesting part.
 | [`cc65`](https://cc65.github.io/)   | Lynx client               | to build the cart       |
 | `intybasic`, `as1600`               | Intellivision client      | to build the ROM        |
 | `cmoc`, `decb` (via `defoogi`)      | CoCo 3 client             | to build the disk       |
+| `m68k-amigaos-gcc`                  | Amiga client              | to build the program    |
 | `dir2atr` (AtariSIO)                | bootable disk image       | `make atr` only         |
 | `gcc`/`cc`                          | Lynx host tests           | `make test` only        |
 | `node`                              | tile editor tests         | `make test-editor` only |
 | Pillow                              | Lynx art previews/mockups | optional                |
 
 To actually play you need FujiNet hardware: a FujiNet for the Atari 8-bit, a  
-FujiNet-Lynx plus a flashcart for the Lynx, an Intellivision FujiNet, or a CoCo  
-FujiNet. There is no FujiNet-capable Lynx emulator (yet), so Lynx changes are  
-validated on real hardware.
+FujiNet-Lynx plus a flashcart for the Lynx, an Intellivision FujiNet, a CoCo  
+FujiNet, or an Amiga with FujiNet NIO. There is no FujiNet-capable Lynx  
+emulator (yet), so Lynx changes are validated on real hardware.
 
 ## Build
 
@@ -86,6 +96,7 @@ make lynx             # Lynx only         -> lynx-client/fujirealm.lnx
 make atr              # bootable disk     -> atari8-client/fujirealm.atr
 make -C intv-client   # Intellivision     -> intv-client/fujirealm.bin/.cfg/.rom
 defoogi make coco     # CoCo 3            -> coco3-client/FUJIRLM3.dsk
+make -C amiga-client  # Amiga             -> amiga-client/build/FujiRealm
 make clean
 ```
 
@@ -242,7 +253,8 @@ it; attribution in your source is all that is asked.
 - The tile editor is built on **[Charsetter](https://www.atari.org.pl/charsetter/)**  
 by Dely, used with their kind permission — thank you!
 - The Lynx client is built with **cc65**; the Atari client with **MADS**; the  
-Intellivision client with **IntyBASIC**; the CoCo 3 client with **CMOC**.
+Intellivision client with **IntyBASIC**; the CoCo 3 client with **CMOC**; the  
+Amiga client with **m68k-amigaos-gcc**.
 - None of this exists without **[FujiNet](https://fujinet.online)**.
 
 Full details, and what each asks of you if you redistribute, are in  
