@@ -41,7 +41,7 @@ up, but regenerating overwrites those edits.
 
 ## Run
 
-Mount `FUJIRLM3.dsk` and boot: AUTOEXEC runs `FRLOGIN`, which asks for the
+Mount `FUJIRLM3.dsk` and boot: AUTOEXEC runs `FUJIRLM3`, which asks for the
 display type on first run, logs in (or resumes), then loads the game,
 `FRPLAY`.
 

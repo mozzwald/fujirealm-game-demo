@@ -9,11 +9,11 @@
 # Two programs share the disk. PRODUCT is the setup program AUTOEXEC.BAS runs
 # (display target, host, login); once a login exists it launches PLAY, the
 # game, which is kept free of login/bootstrap/printf code to leave room.
-PRODUCT = FRLOGIN
+DISK = FUJIRLM3
+PRODUCT = $(DISK)
 PLAY = FRPLAY
 VIEW = ARTVIEW
 SNDT = SNDTEST
-DISK = FUJIRLM3
 
 CMOC ?= cmoc
 DECB ?= decb
@@ -120,7 +120,7 @@ $(SNDT_BIN): $(SNDT_SRC) src/sound.h src/gime.h
 	$(CMOC) $(CFLAGS) -Isrc --org=$(ORG) -o $@ $(SNDT_SRC)
 
 # The overlay (ovl_api.h) is linked into the game's renderer region, so it is
-# built after the game, and FRLOGIN carries its image.
+# built after the game, and the setup program carries its image.
 OVL = FROVL
 OVL_SRC = src/ovl_help.c src/ovl_dialogue.c
 
@@ -140,7 +140,7 @@ src/art_image.c: art/coco_tileset.json src/palette.c tools/art_pack.py
 
 # RUNM, not LOADM:EXEC: the load overwrites this BASIC program ($2601), so
 # nothing after it can be parsed.
-AUTOEXEC.BAS:
+AUTOEXEC.BAS: Makefile
 	@printf '10 RUNM"%s"\n' $(PRODUCT) > $@
 
 $(DSK): $(SETUP_BIN) $(PLAY_BIN) AUTOEXEC.BAS
