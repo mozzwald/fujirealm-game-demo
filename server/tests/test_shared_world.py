@@ -38,6 +38,7 @@ from server.world import (
     MAP_PVP_REALM,
     MAP_STARTER_CAVE,
     OVERWORLD_RESPAWN,
+    OVERWORLD_START,
     OVERWORLD_CAVE_ENTRANCE,
     OVERWORLD_PVP_REALM_ENTRANCE,
     PVP_REALM_ENTRY,
@@ -547,6 +548,23 @@ class SharedWorldTest(unittest.TestCase):
         records = game.remote_players_near(1, 0, 0, limit=12)
         self.assertEqual(len(records), 12)
         self.assertEqual([r.x for r in records[:3]], [12, 13, 14])
+
+    def test_bootstrap_probe_keeps_new_player_at_start(self):
+        game = GameState(seed=1, create_default_player=False)
+        player = game.add_player(TOKEN_A)
+        self.assertEqual((player.x, player.y), OVERWORLD_START)
+        self.assertFalse(game.apply_player_state(state(1, 255, 255), TOKEN_A))
+        self.assertEqual((player.x, player.y), OVERWORLD_START)
+
+    def test_remote_players_near_omits_bootstrap_only_players(self):
+        game = GameState(seed=1, create_default_player=False)
+        game.add_player(TOKEN_A, x=1, y=92)
+        game.add_player(TOKEN_B, x=2, y=92)
+        origin = game.window_origin(TOKEN_A)
+        self.assertEqual(game.remote_players_near(TOKEN_A, *origin, active_tokens={TOKEN_A}), ())
+        self.assertEqual(len(game.remote_players_near(
+            TOKEN_A, *origin, active_tokens={TOKEN_A, TOKEN_B}
+        )), 1)
 
     def test_remote_players_near_excludes_outside_window(self):
         game = GameState(seed=1, create_default_player=False)

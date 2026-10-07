@@ -3366,6 +3366,7 @@ class GameState:
         origin_x: int,
         origin_y: int,
         limit: int = REALTIME_DEFAULT_REMOTE_PLAYERS,
+        active_tokens: set[int] | None = None,
     ) -> tuple[RemotePlayerRecord, ...]:
         limit = max(0, min(limit, REALTIME_MAX_REMOTE_PLAYERS_SUPPORTED))
         me = self.players[token]
@@ -3373,6 +3374,7 @@ class GameState:
             player
             for other_token, player in self.players.items()
             if other_token != token
+            and (active_tokens is None or other_token in active_tokens)
             and player.map_id == me.map_id
             and self._in_window(player.x, player.y, origin_x, origin_y)
         ]
