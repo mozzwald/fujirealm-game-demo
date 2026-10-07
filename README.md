@@ -59,7 +59,7 @@ licensed precisely so you can lift whatever is useful.
 | `intv-client/`   | Intellivision client. IntyBASIC, GRAM card tiles, talks to the Intellivision FujiNet (PiRTO II) through its mailbox. See its README.          |
 | `coco3-client/`  | Tandy CoCo 3 client. CMOC C, GIME hardware scrolling, FujiNet over DriveWire. See its README.                                                 |
 | `amiga-client/`  | Amiga client (Workbench 1.3+, 68000). m68k gcc C, shares the Lynx client's protocol code, talks to FujiNet over FujiNet NIO. |
-| `palm-client/`   | Palm OS client (3.3+; black and white, greys, or colour). prc-tools C, shares the Lynx client's protocol code, played with the stylus, talks to FujiNet's N1: over the HotSync cradle. See its README. |
+| `palm-client/`   | Palm OS client (3.1+ with a named serial library; black and white, greys, or colour). prc-tools C, shares the Lynx client's protocol code, played with the stylus, talks to FujiNet's N1: over a selected cradle link, including Visor USB. See its README. |
 | `tools/`         | Shared build and art tooling, plus `tile-editor/`, the browser tile editor for the clients' art.                                             |
 | `maps/`          | The world as editable CSV grids. `tools/import_map_csv.py` compiles them into the server.                                                     |
 | `docs/`          | The wire protocol, the Atari memory map, and the shared tile-id contract.                                                                     |
@@ -78,7 +78,7 @@ per-machine, and the differences are the interesting part.
 | `intybasic`, `as1600`               | Intellivision client      | to build the ROM        |
 | `cmoc`, `decb` (via `defoogi`)      | CoCo 3 client             | to build the disk       |
 | `m68k-amigaos-gcc`                  | Amiga client              | to build the program    |
-| Docker (`palmdev` image)            | Palm client               | to build the PRC        |
+| Docker (`fujinet-palm-toolchain` image) | Palm client            | to build the PRC        |
 | `dir2atr` (AtariSIO)                | bootable disk image       | `make atr` only         |
 | `gcc`/`cc`                          | Lynx host tests           | `make test` only        |
 | `node`                              | tile editor tests         | `make test-editor` only |
@@ -86,8 +86,8 @@ per-machine, and the differences are the interesting part.
 
 To actually play you need FujiNet hardware: a FujiNet for the Atari 8-bit, a  
 FujiNet-Lynx plus a flashcart for the Lynx, an Intellivision FujiNet, a CoCo  
-FujiNet, an Amiga with FujiNet NIO, or a Palm in a serial HotSync cradle  
-wired to a FujiNet. There is no FujiNet-capable Lynx emulator (yet), so Lynx  
+FujiNet, an Amiga with FujiNet NIO, or a Palm cradle connected to FujiNet
+(including the Visor USB bridge). There is no FujiNet-capable Lynx emulator (yet), so Lynx
 changes are validated on real hardware; the Palm client has an emulator rig  
 (`palm-client/tools/emulator/`).
 

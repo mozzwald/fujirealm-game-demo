@@ -1,5 +1,5 @@
 /*
- * FujiRealm for Palm OS 3.3 and later -- FN Realm in the launcher.
+ * FujiRealm for Palm OS -- FN Realm in the launcher.
  *
  * Same server and wire protocol as the Atari 8-bit, Lynx and Amiga clients:
  * $BF bootstrap packets, then realtime v3 COBS/CRC-16 frames, over TCP. The
@@ -7,7 +7,7 @@
  * shared unchanged from lynx-client/src, and the login identity record from
  * amiga-client/src/identity.c. This file is the Palm's flow and game loop,
  * gfx.c its screen, and net.c its transport: TCP through FujiNet's N1:
- * device, spoken over the HotSync cradle (fujinet-palm common/fnnet).
+ * device, over the selected cradle transport.
  *
  * The game runs inside the Palm event loop: every pass takes one event (or a
  * nilEvent after a tick) and then runs one game_step(). Timers run on
@@ -19,7 +19,7 @@
 
 #include "bootstrap.h"
 #include "dlgmodal.h"
-#include "fnlink.h"
+#include "fn_types.h"
 #include "gfx.h"
 #include "identity.h"
 #include "net.h"
@@ -40,7 +40,7 @@
 
 #define CREATOR APP_CREATOR
 #define PREFS_ID 1
-#define PREFS_VERSION 1
+#define PREFS_VERSION 3
 #define HOST_LEN 48
 #define RECORD_LEN 72
 
@@ -89,21 +89,47 @@ static const signed char step_dy[RTS_FACE_COUNT] = { -1, 1, 0, 0, -1, -1, 1, 1 }
 #define CAM_MARGIN_Y 4
 #define MAP_OVERWORLD 0
 
-/* Hard keys: Date Book and Address walk left and right, the scroll buttons
- * up and down, To Do shoots and Memo Pad uses. */
+/* The four application keys keep their physical keyBitHard1..4 positions
+ * even if the owner reassigns their launcher applications. */
+#define BUTTONS_PRISM 0
+#define BUTTONS_ORIGINAL 1
+#define BUTTONS_COUNT 2
 #define KEY_UP keyBitPageUp
 #define KEY_DOWN keyBitPageDown
-#define KEY_LEFT keyBitHard1
-#define KEY_RIGHT keyBitHard2
-#define KEY_FIRE keyBitHard3
-#define KEY_USE keyBitHard4
-#define GAME_KEYS (KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT | KEY_FIRE | KEY_USE)
+#define KEY_LEFT  (prefs.buttons == BUTTONS_PRISM ? keyBitHard2 : keyBitHard1)
+#define KEY_RIGHT (prefs.buttons == BUTTONS_PRISM ? keyBitHard3 : keyBitHard2)
+#define KEY_FIRE  (prefs.buttons == BUTTONS_PRISM ? keyBitHard4 : keyBitHard3)
+#define KEY_USE   (prefs.buttons == BUTTONS_PRISM ? keyBitHard1 : keyBitHard4)
+#define GAME_KEYS (KEY_UP | KEY_DOWN | keyBitHard1 | keyBitHard2 | \
+                   keyBitHard3 | keyBitHard4)
 
 typedef struct {
     char host[HOST_LEN];
     char name[NAME_MAX + 1];
     char record[RECORD_LEN];    /* identity_format(): name,token,host */
+    UInt8 link;
+    UInt8 buttons;
 } RealmPrefs;
+
+typedef struct {
+    char host[HOST_LEN];
+    char name[NAME_MAX + 1];
+    char record[RECORD_LEN];
+    UInt8 link;
+} RealmPrefsV2;
+
+typedef struct {
+    char host[HOST_LEN];
+    char name[NAME_MAX + 1];
+    char record[RECORD_LEN];
+} RealmPrefsV1;
+
+static const char *const link_names[NET_LINK_COUNT] = {
+    "Legacy cradle", "USB Library", "BuiltIn SerLib", "Serial Library"
+};
+static const char *const button_names[BUTTONS_COUNT] = {
+    "Prism", "Original"
+};
 
 /* ------------------------------------------------------------------ */
 /* State                                                               */
@@ -1542,14 +1568,15 @@ static int start_game(void)
     boot_result("OK");
     boot_step("Entering the realm");
 
-    /* Realtime on the same stream: preamble, AUTH, then a first position.
-     * The server adopts the claimed spot until its first WORLD_STATE
-     * corrects it; the window centre is the best guess available. */
+    /* Realtime starts only after a PLAYER_STATE. Bootstrap gives us the
+     * terrain window but not the player's saved position; its centre is
+     * wrong near map edges. Send an impossible position to request the
+     * server's authoritative WORLD_STATE without moving the player. */
     net_write(&link, (const unsigned char *)"RT3\n", 4);
     send_frame(rt_build_auth(wire, me.token));
     client_seq = 0;
-    game.player_x = (unsigned char)(boot.origin_x + BOOTSTRAP_WINDOW_W / 2);
-    game.player_y = (unsigned char)(boot.origin_y + BOOTSTRAP_WINDOW_H / 2);
+    game.player_x = 0xFF;
+    game.player_y = 0xFF;
     send_player_state(RTS_FACE_DOWN, 0);
 
     rt_state_init(&game);
@@ -1748,6 +1775,7 @@ static void trim(char *s)
 static void setup_play(FormType *form)
 {
     char name[16];
+    char error[48];
 
     get_field_text(form, SetupNameField, name, sizeof name);
     get_field_text(form, SetupServerField, prefs.host, sizeof prefs.host);
@@ -1758,6 +1786,15 @@ static void setup_play(FormType *form)
     }
     if (prefs.host[0] == '\0') {
         set_status(form, "Enter a server.");
+        return;
+    }
+    if (net_init(prefs.link) != 0) {
+        if (prefs.link == NET_LINK_LEGACY && net_link_error() == 0)
+            set_status(form, "Legacy needs Palm OS 3.3+.");
+        else {
+            StrPrintF(error, "Link open failed (error %x).", net_link_error());
+            set_status(form, error);
+        }
         return;
     }
     StrCopy(prefs.name, name);
@@ -1775,6 +1812,13 @@ static void setup_show(FormType *form)
 {
     set_field_text(form, SetupNameField, prefs.name);
     set_field_text(form, SetupServerField, prefs.host);
+    LstSetSelection(FrmGetObjectPtr(form, FrmGetObjectIndex(form, SetupLinkList)), prefs.link);
+    CtlSetLabel(FrmGetObjectPtr(form, FrmGetObjectIndex(form, SetupLinkTrigger)),
+                (char *)link_names[prefs.link]);
+    LstSetSelection(FrmGetObjectPtr(form, FrmGetObjectIndex(form, SetupButtonsList)),
+                    prefs.buttons);
+    CtlSetLabel(FrmGetObjectPtr(form, FrmGetObjectIndex(form, SetupButtonsTrigger)),
+                (char *)button_names[prefs.buttons]);
     FrmDrawForm(form);
     FrmSetFocus(form, FrmGetObjectIndex(form, prefs.name[0] ? SetupServerField :
                                         SetupNameField));
@@ -1792,6 +1836,20 @@ static Boolean SetupHandleEvent(EventType *event)
         if (event->data.ctlSelect.controlID == SetupPlayButton) {
             setup_play(form);
             return true;
+        }
+        break;
+    case popSelectEvent:
+        if (event->data.popSelect.controlID == SetupLinkTrigger) {
+            Int16 selected = event->data.popSelect.selection;
+            if (selected >= 0 && selected < NET_LINK_COUNT)
+                prefs.link = (UInt8)selected;
+            return false;
+        }
+        if (event->data.popSelect.controlID == SetupButtonsTrigger) {
+            Int16 selected = event->data.popSelect.selection;
+            if (selected >= 0 && selected < BUTTONS_COUNT)
+                prefs.buttons = (UInt8)selected;
+            return false;
         }
         break;
     case menuEvent:
@@ -1903,15 +1961,28 @@ static Boolean has_new_serial_manager(void)
 static void load_prefs(void)
 {
     UInt16 size = sizeof prefs;
+    Int16 version;
 
-    if (PrefGetAppPreferences(CREATOR, PREFS_ID, &prefs, &size, true) != PREFS_VERSION ||
-        size != sizeof prefs) {
+    MemSet(&prefs, sizeof prefs, 0);
+    version = PrefGetAppPreferences(CREATOR, PREFS_ID, &prefs, &size, true);
+    if (version == 1 && size == sizeof(RealmPrefsV1)) {
+        prefs.link = NET_LINK_LEGACY;
+        prefs.buttons = BUTTONS_ORIGINAL;
+    } else if (version == 2 && size == sizeof(RealmPrefsV2)) {
+        prefs.buttons = BUTTONS_ORIGINAL;
+    } else if (version != PREFS_VERSION || size != sizeof prefs) {
         MemSet(&prefs, sizeof prefs, 0);
         StrCopy(prefs.host, SERVER_HOST);
+        prefs.link = has_new_serial_manager() ? NET_LINK_LEGACY : NET_LINK_USB;
+        prefs.buttons = BUTTONS_PRISM;
     }
     prefs.host[HOST_LEN - 1] = '\0';
     prefs.name[NAME_MAX] = '\0';
     prefs.record[RECORD_LEN - 1] = '\0';
+    if (prefs.link >= NET_LINK_COUNT)
+        prefs.link = has_new_serial_manager() ? NET_LINK_LEGACY : NET_LINK_USB;
+    if (prefs.buttons >= BUTTONS_COUNT)
+        prefs.buttons = BUTTONS_PRISM;
 }
 
 UInt32 PilotMain(UInt16 cmd, MemPtr cmdPBP, UInt16 launchFlags)
@@ -1920,20 +1991,11 @@ UInt32 PilotMain(UInt16 cmd, MemPtr cmdPBP, UInt16 launchFlags)
     (void)launchFlags;
     if (cmd != sysAppLaunchCmdNormalLaunch)
         return 0;
-    if (!has_new_serial_manager()) {
-        FrmAlert(RomIncompatibleAlert);
-        return 0;
-    }
     tps = SysTicksPerSecond();
     load_prefs();
     if (gfx_open() != 0) {
         gfx_close();
         show_error("This Palm cannot show the game's art.", NULL);
-        return 0;
-    }
-    if (net_init() != 0) {
-        show_error("Could not open the cradle port.", NULL);
-        gfx_close();
         return 0;
     }
     FrmGotoForm(SetupForm);

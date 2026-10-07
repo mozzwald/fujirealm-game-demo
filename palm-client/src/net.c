@@ -2,6 +2,7 @@
 
 #include "fnnet.h"
 #include "net.h"
+#include "link_mode.h"
 
 #define UNIT 1
 #define CONNECT_WAIT_TICKS (SysTicksPerSecond() * 8)
@@ -9,15 +10,43 @@
 #define MAX_MISSES 8
 
 static unsigned char chunk[FN_NET_CHUNK];
+static unsigned char link_mode = NET_LINK_COUNT;
+static unsigned link_error;
 
-int net_init(void)
+int net_init(unsigned char mode)
 {
-    return FnOpen() == errNone ? 0 : 1;
+    Err err;
+
+    if (mode == link_mode)
+        return 0;
+    net_done();
+    link_error = 0;
+    if (mode >= NET_LINK_COUNT)
+        return 1;
+    if (mode == NET_LINK_LEGACY) {
+        UInt32 present;
+        if (FtrGet(sysFileCSerialMgr, sysFtrNewSerialPresent, &present) != errNone ||
+            present == 0)
+            return 1;
+    }
+    err = FnOpenMode(mode);
+    if (err != errNone) {
+        link_error = err;
+        return 1;
+    }
+    link_mode = mode;
+    return 0;
 }
 
 void net_done(void)
 {
     FnClose();
+    link_mode = NET_LINK_COUNT;
+}
+
+unsigned net_link_error(void)
+{
+    return link_error;
 }
 
 static void reset(struct net_stream *s)

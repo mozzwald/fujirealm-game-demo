@@ -1,11 +1,13 @@
 # FujiRealm — Palm OS Client
 
-FujiRealm for Palm OS 3.3 and later (**FN Realm** in the launcher, creator
-`ADFR`), on the same live server as the Atari 8-bit, Lynx, Amiga and CoCo 3
-clients, through **FujiNet's N1: device on the HotSync cradle**: the Palm
-sits in its serial cradle, wired through a null modem to a FujiNet running
-the HotSync/FujiBus firmware (see
-[fujinet-palm](https://github.com/dillera/fujinet-palm)).
+FujiRealm for Palm OS (**FN Realm** in the launcher, creator `ADFR`), on the
+same live server as the Atari 8-bit, Lynx, Amiga and CoCo 3 clients, through
+**FujiNet's N1: device**. The setup screen selects one of four links:
+Legacy cradle (Palm OS 3.3+), USB Library (Handspring Visor USB cradle),
+BuiltIn SerLib, or Serial Library. The named libraries use the old Palm
+Serial Manager and work on Palm OS 3.1. See
+[fujinet-palm](https://github.com/dillera/fujinet-palm) for the Visor USB
+bridge and FujiNet hardware setup.
 
 Same server, same wire protocol (`$BF` bootstrap + realtime v3 COBS/CRC-16),
 same logical tile ids. The protocol, bootstrap, terrain cache, movement
@@ -27,9 +29,17 @@ the token in its preferences.
 | Anywhere in a conversation | Read on; a quest offer has **Accept** / **Decline** (tapping the text accepts) |
 | Menu | Toggle PvP, Link Statistics (position, bytes, polls), Leave the Realm; Help: How to Play, Talking & Quests, About |
 
-Items are picked up by walking over them. The hardware buttons still work
-for those who want them: Date Book / Address walk left / right, the scroll
-buttons up / down, To Do shoots, Memo Pad uses.
+Items are picked up by walking over them. The setup screen saves one of two
+hardware button layouts; the middle scroll buttons move up/down in both:
+
+| Layout | Date Book | Contacts / Address | To Do | Memo / Notepad |
+| --- | --- | --- | --- | --- |
+| Prism (new installs) | Use | Left | Right | Fire |
+| Original (existing installs) | Left | Right | Fire | Use |
+
+The buttons are read by physical position, so either layout can be chosen on
+a Prism or Palm IIIx. Existing preferences keep their original mapping until
+you select Prism on the setup screen.
 
 ## Building
 
@@ -42,9 +52,18 @@ make install FUJINET=<ip>   # queue the .prc on FujiNet's SD card; HotSync to in
 ```
 
 Each build is also copied to `build/FujiRealm-<depth>bpp.prc`. The build runs
-in the `palmdev` Docker image (prc-tools-remix) from a `fujinet-palm`
-checkout (`FUJINET_PALM`, default `~/code/FujiPalm/fujinet-palm`) for its
-FujiBus and N: code. Art is converted on the host by `tools/palm_art.py`.
+in the `fujinet-palm-toolchain` Docker image (override with `IMAGE=palmdev`).
+It compiles the FujiBus framing and N: driver from the sibling
+`fujinet-texasHoldEm/palm/common` checkout (`FUJINET_HOLDEM` can override its
+path). `src/fnlink.c` adds the four port choices while keeping the small
+legacy network driver. This linked Palm build includes GPL-3.0 code; see
+`THIRD-PARTY-NOTICES.md`. Art is converted on the host by `tools/palm_art.py`.
+
+On a Visor with a USB cradle, choose **USB Library** before tapping Play.
+Run `visorbridge.js` and FujiNet-PC, or connect the cradle to the supported
+ESP32-S3 USB host firmware, as described in `fujinet-palm/README.md`. On an
+emulator, choose **Serial Library**. For a serial HotSync cradle connected
+directly to FujiNet, choose **Legacy cradle** on Palm OS 3.3+.
 
 | `GFX_DEPTH` | Art | Screen |
 | --- | --- | --- |

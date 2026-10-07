@@ -6,6 +6,10 @@
 #define SetupServerField 1002
 #define SetupPlayButton 1003
 #define SetupStatusField 1004
+#define SetupLinkTrigger 1005
+#define SetupLinkList 1006
+#define SetupButtonsTrigger 1007
+#define SetupButtonsList 1008
 
 #define GameForm 1100
 

@@ -1,8 +1,8 @@
 #ifndef FUJIREALM_PALM_NET_H
 #define FUJIREALM_PALM_NET_H
 
-/* A TCP byte stream through FujiNet's N1: device, over the HotSync cradle
- * (fujinet-palm common/fnnet), standing in for the Atari/Lynx Netstream.
+/* A TCP byte stream through FujiNet's N1: device, over the selected Palm link,
+ * standing in for the Atari/Lynx Netstream.
  * Every call is a FujiBus exchange on the serial port, so callers poll at a
  * bounded rate. */
 
@@ -24,9 +24,17 @@ struct net_stream {
     unsigned char ndev_error;   /* FujiNet's NDEV status, if it gave one */
 };
 
-/* Open the cradle port. 0 on success. */
-int net_init(void);
+/* The same four links offered by the Texas Hold'em Palm client. */
+#define NET_LINK_LEGACY 0
+#define NET_LINK_USB 1
+#define NET_LINK_BUILTIN 2
+#define NET_LINK_SERIAL 3
+#define NET_LINK_COUNT 4
+
+/* Open the selected link. 0 on success. May be called again after a change. */
+int net_init(unsigned char mode);
 void net_done(void);
+unsigned net_link_error(void);
 
 /* Open tcp://host:port and wait (bounded) for it to connect. 0 on success. */
 int net_open(struct net_stream *s, const char *host, unsigned port);

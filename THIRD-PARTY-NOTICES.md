@@ -1,11 +1,9 @@
 # Third-Party Notices
 
-FujiRealm itself; the game, the two clients, the server, the tools and the art,  
-is MIT licensed; see `LICENSE`. This file records the third-party work it  
-builds on, and what each piece asks of you if you redistribute it.
-
-None of it imposes copyleft on your own game if you use this repository as a  
-starting point.
+FujiRealm's original code is MIT licensed; see `LICENSE`. This file records
+the third-party work it builds on, and what each piece asks of you if you
+redistribute it. The Palm client now uses GPL-3.0 code from Texas Hold'em;
+see its section below for the effect on a distributed Palm binary.
 
 ---
 
@@ -102,6 +100,16 @@ against [CloudpilotEmu](https://github.com/cloudpilot-emu/cloudpilot-emu)
 OS Emulator (© Palm, Inc.). The patch carries the same license. It is a
 development tool only: nothing from it is linked into the Palm client.
 
+## FujiNet Texas Hold'em — Palm FujiBus and N: driver
+
+The Palm build compiles `palm/common/fujibus.c` and `palm/common/fnnet.c`
+from [fujinet-texasHoldEm](https://github.com/dillera/fujinet-texasHoldEm),
+which is GPL-3.0. `palm-client/src/fnlink.c` adapts its `fnlink.c` for the
+four Palm link modes. A distributed FujiRealm Palm binary containing this
+code must meet the GPL-3.0 requirements, including providing the complete
+corresponding source. The original FujiRealm code remains available under
+its MIT license.
+
 ## Build-time tools
 
 Not linked into any shipped artifact and not redistributed here:
@@ -110,6 +118,5 @@ Not linked into any shipped artifact and not redistributed here:
 - **dir2atr** (AtariSIO) — builds the ATR.
 - **Pillow** — used only by the optional Lynx art/mockup scripts.
 - **node** — runs the tile editor's model tests.
-- **prc-tools-remix**, **PilRC** and the Palm OS SDK (the `palmdev` Docker
-  image) — build the Palm client; its FujiBus and N: code is compiled from a
-  [fujinet-palm](https://github.com/dillera/fujinet-palm) checkout.
+- **prc-tools-remix**, **PilRC** and the Palm OS SDK (the Palm toolchain Docker
+  image) — build the Palm client.

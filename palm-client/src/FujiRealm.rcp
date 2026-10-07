@@ -24,9 +24,15 @@ BEGIN
     FIELD ID SetupNameField AT (40 50 50 12) UNDERLINED SINGLELINE MAXCHARS 8
     LABEL "Server:" AUTOID AT (2 66)
     FIELD ID SetupServerField AT (40 66 118 12) UNDERLINED SINGLELINE MAXCHARS 47
-    LABEL "Name: 1-8 letters or digits." AUTOID AT (2 86)
-    LABEL "Played entirely with the stylus;" AUTOID AT (2 102)
-    LABEL "Menu > Help tells you how." AUTOID AT (2 113)
+    LABEL "Link:" AUTOID AT (2 85)
+    POPUPTRIGGER "Legacy cradle" ID SetupLinkTrigger AT (36 82 108 12) LEFTANCHOR FONT 0
+    POPUPLIST ID SetupLinkTrigger SetupLinkList
+    LIST "Legacy cradle" "USB Library" "BuiltIn SerLib" "Serial Library" ID SetupLinkList AT (36 82 112 48) NONUSABLE FONT 0
+    LABEL "Buttons:" AUTOID AT (2 101)
+    POPUPTRIGGER "Prism" ID SetupButtonsTrigger AT (48 98 96 12) LEFTANCHOR FONT 0
+    POPUPLIST ID SetupButtonsTrigger SetupButtonsList
+    LIST "Prism" "Original" ID SetupButtonsList AT (48 98 96 24) NONUSABLE FONT 0
+    LABEL "Name: 1-8 letters or digits." AUTOID AT (2 121)
     BUTTON "Play" ID SetupPlayButton AT (1 147 AUTO AUTO)
     FIELD ID SetupStatusField AT (34 148 112 11) NONEDITABLE SINGLELINE MAXCHARS 47
     GRAFFITISTATEINDICATOR AT (150 148)
@@ -92,7 +98,7 @@ ALERT ID RomIncompatibleAlert
 ERROR
 BEGIN
     TITLE "FN Realm"
-    MESSAGE "This app needs Palm OS 3.3 or later."
+    MESSAGE "Legacy cradle needs Palm OS 3.3 or later. Choose another link."
     BUTTONS "OK"
 END
 
@@ -110,7 +116,7 @@ STRING ID HelpPlayString "FujiRealm is one live world, shared by everyone playin
 "PICK UP: walk over gold, herbs, sticks and other items.\n\n"\
 "USE: tap yourself, or the text below the map. This is Enter on the other machines: it talks to whoever is beside you and picks up what lies next to you.\n\n"\
 "MENU: tap the Menu button for PvP, help, and to leave the realm.\n\n"\
-"The buttons work too, if you like: Date Book and Address walk left and right, the scroll buttons up and down, To Do shoots and Memo Pad uses."
+"BUTTONS: the middle scroll buttons move up and down. Choose Prism on setup for Contacts left, To Do right, Memo fire and Date use; Original keeps Date left, Contacts right, To Do fire and Memo use."
 
 STRING ID HelpTalkString "TALKING: tap a person. You walk over to them and start talking.\n\n"\
 "In a conversation, tap anywhere to read on. When someone offers you a quest, tap Accept or Decline.\n\n"\
