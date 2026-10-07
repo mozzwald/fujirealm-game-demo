@@ -7,6 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 
 from server.hybrid_server import (
+    BOOTSTRAP_TOKEN_TTL,
     CLIENT_LINK_PROFILES,
     LINK_PROFILE_DEFAULT,
     LINK_PROFILE_LYNX_COMLYNX,
@@ -56,7 +57,7 @@ from server.protocol import (
     encode_window_commit,
     realtime_packet_size,
 )
-from server.world import HERB, MAP_OVERWORLD, MAP_PVP_REALM
+from server.world import HERB, MAP_OVERWORLD, MAP_PVP_REALM, OVERWORLD_START
 from server.world import MAP_STARTER_CAVE
 from server.world import PALETTE_CAVE, TILESET_CAVE
 from server.world_layout_data import PVP_REALM_RESPAWN
@@ -294,6 +295,32 @@ class HybridServerTest(unittest.TestCase):
         welcome = next(packet for packet in packets if packet.packet_type == PacketType.WELCOME)
         self.assertEqual(decode_welcome(welcome.payload).seed, self.server.game.seed)
         self.assertIn(TOKEN_A, self.server.game.players)
+
+    def test_first_position_probe_reports_authoritative_spawn(self):
+        port = self._start_server()
+        self._bootstrap(port, TOKEN_A)
+        client = self._open_realtime(port, TOKEN_A, player_state(seq=1, x=255, y=255))
+
+        world = decode_world_state(
+            self._recv_packet_of_type(client, {RealtimeType.WORLD_STATE})
+        )
+        self.assertEqual((world.player_x, world.player_y), OVERWORLD_START)
+        self.assertTrue(world.correction_flags)
+        self.assertEqual(
+            (self.server.game.players[TOKEN_A].x, self.server.game.players[TOKEN_A].y),
+            OVERWORLD_START,
+        )
+
+    def test_expired_bootstrap_detaches_player_without_realtime_session(self):
+        self.server = FujiRealmHybridServer("127.0.0.1", 0)
+        self.server.game.ensure_player(TOKEN_A)
+        self.server.bootstrapped_tokens[TOKEN_A] = time.monotonic() - BOOTSTRAP_TOKEN_TTL - 1
+
+        self.server._drop_stale_sessions()
+
+        self.assertNotIn(TOKEN_A, self.server.game.players)
+        self.assertIn(TOKEN_A, self.server.game.offline_players)
+        self.assertNotIn(TOKEN_A, self.server.bootstrapped_tokens)
 
     def test_bootstrap_socket_can_transition_to_realtime(self):
         port = self._start_server(client_byte_rate=2000.0)

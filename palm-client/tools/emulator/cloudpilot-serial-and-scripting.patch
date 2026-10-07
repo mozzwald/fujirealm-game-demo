@@ -1,0 +1,433 @@
+diff --git a/src/cloudpilot/Makefile b/src/cloudpilot/Makefile
+index 4f34fa7..3e67ac8 100644
+--- a/src/cloudpilot/Makefile
++++ b/src/cloudpilot/Makefile
+@@ -196,6 +196,7 @@ SOURCE_CXX_NATIVE = \
+ 	native/network-backend/codes.cpp \
+ 	native/network-backend/sockopt.cpp \
+ 	native/DebugSupport.cpp \
++	native/SerialBridge.cpp \
+ 	emulator/assert_native.cpp \
+ 	emulator/stacktrace.cpp
+ 
+diff --git a/src/cloudpilot/native/Commands.cpp b/src/cloudpilot/native/Commands.cpp
+index 4f1286b..9189f6c 100644
+--- a/src/cloudpilot/native/Commands.cpp
++++ b/src/cloudpilot/native/Commands.cpp
+@@ -23,6 +23,13 @@
+ #include "ZipfileWalker.h"
+ #include "md5.h"
+ #include "util.h"
++#include "ButtonEvent.h"
++#include "Frame.h"
++#include "Nibbler.h"
++#include "PenEvent.h"
++
++#include <SDL.h>
++#include <SDL_image.h>
+ 
+ using namespace std;
+ 
+@@ -487,7 +494,160 @@ namespace {
+         gDebugger.ClearAllSyscallTraps();
+     }
+ 
++    // ---- Playtesting helpers: screenshots and scripted input ----------
++
++    // The LCD as the device shows it (2-bit greys through the Dragonball's
++    // grey palette register), one pixel per Palm pixel.
++    void CmdScreenshot(vector<string> args, cli::CommandEnvironment& env, void* context) {
++        if (args.size() != 1) return env.PrintUsage();
++
++        static constexpr uint32 GREY16[] = {
++            0xffd2d2d2, 0xffc4c4c4, 0xffb6b6b6, 0xffa8a8a8, 0xff9a9a9a, 0xff8c8c8c,
++            0xff7e7e7e, 0xff707070, 0xff626262, 0xff545454, 0xff464646, 0xff383838,
++            0xff2a2a2a, 0xff1c1c1c, 0xff0e0e0e, 0xff000000};
++
++        Frame frame(320 * 480 * 4);
++        if (!gSession->IsPowerOn() || !EmHAL::CopyLCDFrame(frame, true)) {
++            cout << "screenshot failed: no frame" << endl << flush;
++            return;
++        }
++
++        SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(
++            0, frame.lineWidth, frame.lines, 32, SDL_PIXELFORMAT_ABGR8888);
++        uint8* buffer = frame.GetBuffer();
++        uint16 mapping = EmHAL::GetLCD2bitMapping();
++        uint32 palette2[4] = {GREY16[mapping & 0xf], GREY16[(mapping >> 4) & 0xf],
++                              GREY16[(mapping >> 8) & 0xf], GREY16[(mapping >> 12) & 0xf]};
++
++        for (uint32 y = 0; y < frame.lines; y++) {
++            uint32* line = reinterpret_cast<uint32*>(static_cast<uint8*>(surface->pixels) +
++                                                     y * surface->pitch);
++            uint8* src = buffer + y * frame.bytesPerLine;
++
++            switch (frame.bpp) {
++                case 1: {
++                    Nibbler<1> n;
++                    n.reset(src, frame.margin);
++                    for (uint32 x = 0; x < frame.lineWidth; x++)
++                        line[x] = n.nibble() ? GREY16[15] : GREY16[0];
++                } break;
++                case 2: {
++                    Nibbler<2> n;
++                    n.reset(src, frame.margin);
++                    for (uint32 x = 0; x < frame.lineWidth; x++) line[x] = palette2[n.nibble()];
++                } break;
++                case 4: {
++                    Nibbler<4> n;
++                    n.reset(src, frame.margin);
++                    for (uint32 x = 0; x < frame.lineWidth; x++) line[x] = GREY16[n.nibble()];
++                } break;
++                case 24:
++                    memcpy(line, src + 4 * frame.margin, 4 * frame.lineWidth);
++                    break;
++            }
++        }
++
++        bool ok = IMG_SavePNG(surface, args[0].c_str()) == 0;
++        SDL_FreeSurface(surface);
++
++        cout << (ok ? "screenshot saved: " : "screenshot failed: ") << args[0] << " ("
++             << frame.lineWidth << "x" << frame.lines << ", " << static_cast<int>(frame.bpp)
++             << " bpp, grey map 0x" << hex << mapping << dec << ")" << endl
++             << flush;
++    }
++
++    bool ParseInt(const string& s, int& out) {
++        istringstream stream(s);
++        stream >> out;
++        return !stream.fail() && stream.eof();
++    }
++
++    void CmdPen(vector<string> args, cli::CommandEnvironment& env, void* context) {
++        int x, y;
++
++        if (args.size() == 1 && args[0] == "up")
++            gSession->QueuePenEvent(PenEvent::up());
++        else if (args.size() == 3 && args[0] == "down" && ParseInt(args[1], x) &&
++                 ParseInt(args[2], y))
++            gSession->QueuePenEvent(PenEvent::down(x, y));
++        else
++            env.PrintUsage();
++    }
++
++    void CmdTap(vector<string> args, cli::CommandEnvironment& env, void* context) {
++        int x, y;
++
++        if (args.size() != 2 || !ParseInt(args[0], x) || !ParseInt(args[1], y))
++            return env.PrintUsage();
++
++        gSession->QueuePenEvent(PenEvent::down(x, y));
++        gSession->QueuePenEvent(PenEvent::down(x, y));
++        gSession->QueuePenEvent(PenEvent::up());
++    }
++
++    void CmdButton(vector<string> args, cli::CommandEnvironment& env, void* context) {
++        static const unordered_map<string, ButtonEvent::Button> buttons = {
++            {"app1", ButtonEvent::Button::app1},       {"app2", ButtonEvent::Button::app2},
++            {"app3", ButtonEvent::Button::app3},       {"app4", ButtonEvent::Button::app4},
++            {"up", ButtonEvent::Button::rockerUp},     {"down", ButtonEvent::Button::rockerDown},
++            {"power", ButtonEvent::Button::power},     {"cradle", ButtonEvent::Button::cradle},
++        };
++
++        if (args.size() < 1 || args.size() > 2 || buttons.find(args[0]) == buttons.end())
++            return env.PrintUsage();
++
++        ButtonEvent::Button button = buttons.at(args[0]);
++        string action = args.size() == 2 ? args[1] : "click";
++
++        if (action == "press" || action == "click")
++            gSession->QueueButtonEvent(ButtonEvent(button, ButtonEvent::Type::press));
++        if (action == "release" || action == "click")
++            gSession->QueueButtonEvent(ButtonEvent(button, ButtonEvent::Type::release));
++        if (action != "press" && action != "release" && action != "click") env.PrintUsage();
++    }
++
++    void CmdKey(vector<string> args, cli::CommandEnvironment& env, void* context) {
++        if (args.size() != 1) return env.PrintUsage();
++
++        // \b backspace, \n return, \t tab, \\ backslash.
++        const string& text = args[0];
++        for (size_t i = 0; i < text.size(); i++) {
++            char c = text[i];
++
++            if (c == '\\' && i + 1 < text.size()) {
++                switch (text[++i]) {
++                    case 'b': c = 0x08; break;
++                    case 'n': c = '\n'; break;
++                    case 't': c = '\t'; break;
++                    default: c = text[i]; break;
++                }
++            }
++
++            gSession->QueueKeyboardEvent(c);
++        }
++    }
++
+     const vector<cli::Command> commandList({
++        {.name = "screenshot",
++         .usage = "screenshot <file.png>",
++         .description = "Save the LCD as a PNG, one pixel per Palm pixel.",
++         .cmd = CmdScreenshot},
++        {.name = "tap",
++         .usage = "tap <x> <y>",
++         .description = "Tap the pen at screen coordinates.",
++         .cmd = CmdTap},
++        {.name = "pen",
++         .usage = "pen down <x> <y> | pen up",
++         .description = "Put the pen down (or move it), or lift it.",
++         .cmd = CmdPen},
++        {.name = "button",
++         .usage = "button <app1|app2|app3|app4|up|down|power|cradle> [press|release|click]",
++         .description = "Press, release or click a hardware button.",
++         .cmd = CmdButton},
++        {.name = "key",
++         .usage = "key <text>   (escapes: \\b backspace, \\n return)",
++         .description = "Enter characters as if written in Graffiti.",
++         .cmd = CmdKey},
+         {
+             .name = "install",
+             .usage = "install <file> [file...]",
+diff --git a/src/cloudpilot/native/MainLoop.cpp b/src/cloudpilot/native/MainLoop.cpp
+index e54d83d..66e17de 100644
+--- a/src/cloudpilot/native/MainLoop.cpp
++++ b/src/cloudpilot/native/MainLoop.cpp
+@@ -52,6 +52,8 @@ MainLoop::~MainLoop() {
+ 
+ bool MainLoop::IsRunning() const { return !eventHandler.IsQuit(); }
+ 
++void MainLoop::SetSliceHook(std::function<void()> hook) { sliceHook = hook; }
++
+ void MainLoop::Cycle() {
+     const uint64 millis = Platform::GetMilliseconds();
+     const uint32 clocksPerSecond = gSession->GetClocksPerSecond();
+@@ -66,8 +68,12 @@ void MainLoop::Cycle() {
+         if (cycles > 0) {
+             long cyclesPassed = 0;
+ 
+-            while (cyclesPassed < cycles && !gDebugger.IsStopped())
+-                cyclesPassed += gSession->RunEmulation(cycles - cyclesPassed);
++            const long slice = sliceHook ? static_cast<long>(clocksPerSecond / 2000) : cycles;
++
++            while (cyclesPassed < cycles && !gDebugger.IsStopped()) {
++                cyclesPassed += gSession->RunEmulation(min(slice, cycles - cyclesPassed));
++                if (sliceHook) sliceHook();
++            }
+             clockEmu +=
+                 static_cast<double>(cyclesPassed) / (static_cast<double>(clocksPerSecond) / 1000.);
+         }
+diff --git a/src/cloudpilot/native/MainLoop.h b/src/cloudpilot/native/MainLoop.h
+index b53f2d0..31d277a 100644
+--- a/src/cloudpilot/native/MainLoop.h
++++ b/src/cloudpilot/native/MainLoop.h
+@@ -3,6 +3,8 @@
+ 
+ #include <SDL.h>
+ 
++#include <functional>
++
+ #include "EmTypes.h"
+ #include "EventHandler.h"
+ #include "Frame.h"
+@@ -12,6 +14,11 @@
+ class MainLoop {
+    public:
+     MainLoop(SDL_Window* window, SDL_Renderer* renderer, int scale);
++
++    // Called between short slices of emulation (about 0.5 ms of Palm time)
++    // instead of once per frame, so a serial peer sees replies at UART-like
++    // latency rather than one frame later.
++    void SetSliceHook(std::function<void()> hook);
+     ~MainLoop();
+ 
+     bool IsRunning() const;
+@@ -41,6 +48,8 @@ class MainLoop {
+     uint64 lastScreenRefreshAt{0};
+ 
+     EventHandler eventHandler;
++
++    std::function<void()> sliceHook;
+ };
+ 
+ #endif  // _SDL_MAIN_LOOP_H_
+diff --git a/src/cloudpilot/native/SerialBridge.cpp b/src/cloudpilot/native/SerialBridge.cpp
+new file mode 100644
+index 0000000..b55860a
+--- /dev/null
++++ b/src/cloudpilot/native/SerialBridge.cpp
+@@ -0,0 +1,69 @@
++#include "SerialBridge.h"
++
++#include <errno.h>
++#include <fcntl.h>
++#include <termios.h>
++#include <unistd.h>
++
++#include <iostream>
++
++#include "EmSession.h"
++
++using namespace std;
++
++SerialBridge::SerialBridge(const string& path) : path(path) {}
++
++SerialBridge::~SerialBridge() {
++    if (fd >= 0) close(fd);
++}
++
++bool SerialBridge::Open() {
++    fd = open(path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
++    if (fd < 0) {
++        cerr << "serial: cannot open " << path << ": " << strerror(errno) << endl;
++        return false;
++    }
++
++    struct termios tio;
++    if (tcgetattr(fd, &tio) == 0) {
++        cfmakeraw(&tio);
++        cfsetspeed(&tio, B115200);
++        tcsetattr(fd, TCSANOW, &tio);
++    }
++
++    cout << "serial: cradle port bridged to " << path << endl << flush;
++    return true;
++}
++
++void SerialBridge::Attach() { gSession->SetTransportSerial(kUARTSerial, transport); }
++
++void SerialBridge::Cycle() {
++    if (fd < 0) return;
++
++    uint8 buffer[4096];
++    ssize_t got = read(fd, buffer, sizeof(buffer));
++
++    // Bytes arriving while the Palm has the port closed are lost on a real
++    // cable too.
++    if (got > 0 && transport->IsOpen()) transport->Send(static_cast<int>(got), buffer, true);
++
++    int pending = transport->RxBytesPending();
++    if (pending > 0) {
++        const uint8* data = reinterpret_cast<const uint8*>(transport->Receive());
++
++        while (pending > 0) {
++            ssize_t written = write(fd, data, pending);
++
++            if (written < 0) {
++                if (errno == EAGAIN || errno == EINTR) {
++                    usleep(1000);
++                    continue;
++                }
++                break;
++            }
++
++            data += written;
++            pending -= static_cast<int>(written);
++        }
++    }
++}
+diff --git a/src/cloudpilot/native/SerialBridge.h b/src/cloudpilot/native/SerialBridge.h
+new file mode 100644
+index 0000000..07686f9
+--- /dev/null
++++ b/src/cloudpilot/native/SerialBridge.h
+@@ -0,0 +1,27 @@
++#ifndef _SERIAL_BRIDGE_H_
++#define _SERIAL_BRIDGE_H_
++
++#include <string>
++
++#include "EmTransportSerialBuffer.h"
++
++// Bridges the emulated cradle serial port (kUARTSerial) to a host tty or
++// pty, so a Palm app can talk to real serial software on the host -- for
++// example FujiNet-PC on the other end of a socat pty pair.
++class SerialBridge {
++   public:
++    explicit SerialBridge(const std::string& path);
++    ~SerialBridge();
++
++    bool Open();
++    void Attach();  // after the session is initialized
++    void Cycle();   // move pending bytes both ways; call every loop
++
++   private:
++    std::string path;
++    int fd{-1};
++    // Owned by the session once attached (EmSession deletes its transports).
++    EmTransportSerialBuffer* transport{new EmTransportSerialBuffer()};
++};
++
++#endif  // _SERIAL_BRIDGE_H_
+diff --git a/src/cloudpilot/native/main.cpp b/src/cloudpilot/native/main.cpp
+index 51e2b39..a79fee5 100644
+--- a/src/cloudpilot/native/main.cpp
++++ b/src/cloudpilot/native/main.cpp
+@@ -25,6 +25,7 @@
+ #include "MainLoop.h"
+ #include "ProxyHandler.h"
+ #include "ScreenDimensions.h"
++#include "SerialBridge.h"
+ #include "SessionImage.h"
+ #include "SuspendContextClipboardCopy.h"
+ #include "SuspendContextClipboardPaste.h"
+@@ -58,6 +59,7 @@ struct Options {
+     optional<string> mountImage;
+     DebuggerConfiguration debuggerConfiguration;
+     bool smallWindow;
++    optional<string> serialPath;
+ };
+ 
+ void handleSuspend() {
+@@ -192,6 +194,13 @@ void run(const Options& options) {
+ 
+     setupCard(options);
+ 
++    unique_ptr<SerialBridge> serialBridge;
++    if (options.serialPath) {
++        serialBridge = make_unique<SerialBridge>(*options.serialPath);
++        if (!serialBridge->Open()) exit(1);
++        serialBridge->Attach();
++    }
++
+     ProxyClient* proxyClient = nullptr;
+     ProxyHandler* proxyHandler = nullptr;
+     setupProxy(proxyClient, proxyHandler, options);
+@@ -214,6 +223,10 @@ void run(const Options& options) {
+     recreateWindow(window, renderer, scale, options.smallWindow);
+ 
+     unique_ptr<MainLoop> mainLoop = make_unique<MainLoop>(window, renderer, scale);
++    auto attachSerial = [&]() {
++        if (serialBridge) mainLoop->SetSliceHook([&]() { serialBridge->Cycle(); });
++    };
++    attachSerial();
+ 
+     commands::Register();
+     cli::Start(options.scriptFile);
+@@ -225,6 +238,7 @@ void run(const Options& options) {
+ 
+             recreateWindow(window, renderer, scale, options.smallWindow);
+             mainLoop = make_unique<MainLoop>(window, renderer, scale);
++            attachSerial();
+         }
+ 
+         mainLoop->Cycle();
+@@ -347,6 +361,10 @@ int main(int argc, char** argv) {
+         .default_value(false)
+         .implicit_value(true);
+ 
++    program.add_argument("--serial")
++        .metavar("<tty or pty>")
++        .help("bridge the cradle serial port to a host tty/pty");
++
+     program.add_argument("--small-window")
+         .help("use small window")
+         .default_value(false)
+@@ -386,6 +404,7 @@ int main(int argc, char** argv) {
+     options.proxyInsecure = program.get<bool>("--proxy-insecure");
+     options.proxyCa = program.present("--proxy-ca");
+     options.smallWindow = program.get<bool>("--small-window");
++    options.serialPath = program.present("--serial");
+ 
+ #ifdef ENABLE_DEBUGGER
+     if (auto port = program.present<unsigned int>("--listen"))

@@ -877,6 +877,10 @@ class FujiRealmHybridServer:
             if now - bootstrapped_at > BOOTSTRAP_TOKEN_TTL:
                 del self.bootstrapped_tokens[token]
                 self.bootstrapped_profiles.pop(token, None)
+                # HELLO attaches a player before AUTH. If AUTH never arrives,
+                # release that player and its blocking entity as well.
+                if token not in self.realtime_by_token and token in self.game.players:
+                    self.game.detach_player(token)
         for session in list(self.sessions.values()):
             if session.kind == KIND_REALTIME and session.token is not None:
                 if now - session.last_heard_at > self.player_idle_timeout:
@@ -1705,7 +1709,11 @@ class FujiRealmHybridServer:
 
             # Remote players: change-driven, with a periodic refresh while
             # any are visible (bandwidth rule: never unconditional per tick).
-            records = game.remote_players_near(token, *session.window_origin, limit=self.visible_remotes)
+            active_tokens = set(self.realtime_by_token) | self.pvp_bot_tokens
+            records = game.remote_players_near(
+                token, *session.window_origin, limit=self.visible_remotes,
+                active_tokens=active_tokens,
+            )
             if records != session.remote_sent or (
                 records and now - session.remote_sent_at >= REMOTE_REFRESH_INTERVAL
             ):

@@ -1,0 +1,124 @@
+#include "FujiRealmRsc.h"
+
+VERSION ID 1 "1.0"
+
+ICONFAMILYEX
+BEGIN
+    BITMAP "icon.bmp" BPP 1
+END
+
+SMALLICONFAMILYEX
+BEGIN
+    BITMAP "icon-small.bmp" BPP 1
+END
+
+FORM ID SetupForm AT (0 0 160 160)
+NOFRAME
+USABLE
+MENUID SetupMenu
+BEGIN
+    TITLE "FN Realm"
+    LABEL "FujiNet Realms, the shared world of" AUTOID AT (2 18)
+    LABEL "the Atari, Lynx, Amiga and CoCo." AUTOID AT (2 29)
+    LABEL "Name:" AUTOID AT (2 50)
+    FIELD ID SetupNameField AT (40 50 50 12) UNDERLINED SINGLELINE MAXCHARS 8
+    LABEL "Server:" AUTOID AT (2 66)
+    FIELD ID SetupServerField AT (40 66 118 12) UNDERLINED SINGLELINE MAXCHARS 47
+    LABEL "Link:" AUTOID AT (2 85)
+    POPUPTRIGGER "Legacy cradle" ID SetupLinkTrigger AT (36 82 108 12) LEFTANCHOR FONT 0
+    POPUPLIST ID SetupLinkTrigger SetupLinkList
+    LIST "Legacy cradle" "USB Library" "BuiltIn SerLib" "Serial Library" ID SetupLinkList AT (36 82 112 48) NONUSABLE FONT 0
+    LABEL "Buttons:" AUTOID AT (2 101)
+    POPUPTRIGGER "Prism" ID SetupButtonsTrigger AT (48 98 96 12) LEFTANCHOR FONT 0
+    POPUPLIST ID SetupButtonsTrigger SetupButtonsList
+    LIST "Prism" "Original" ID SetupButtonsList AT (48 98 96 24) NONUSABLE FONT 0
+    LABEL "Name: 1-8 letters or digits." AUTOID AT (2 121)
+    BUTTON "Play" ID SetupPlayButton AT (1 147 AUTO AUTO)
+    FIELD ID SetupStatusField AT (34 148 112 11) NONEDITABLE SINGLELINE MAXCHARS 47
+    GRAFFITISTATEINDICATOR AT (150 148)
+END
+
+FORM ID GameForm AT (0 0 160 160)
+NOFRAME
+USABLE
+MENUID GameMenu
+BEGIN
+END
+
+FORM ID AboutForm AT (2 22 156 136)
+MODAL
+USABLE
+DEFAULTBTNID AboutOkButton
+BEGIN
+    TITLE "About FujiRealm"
+    LABEL "FujiRealm" AUTOID AT (CENTER 18) FONT 7
+    LABEL "FujiRealm 2026 by Mozzwald" AUTOID AT (CENTER 44) FONT 1
+    LABEL "Palm porting by Diller" AUTOID AT (CENTER 58) FONT 1
+    LABEL "One live world shared by the Atari," AUTOID AT (CENTER 78)
+    LABEL "Lynx, Amiga, CoCo 3 and Palm," AUTOID AT (CENTER 89)
+    LABEL "through FujiNet. Version 1.0" AUTOID AT (CENTER 100)
+    BUTTON "OK" ID AboutOkButton AT (CENTER 118 36 12)
+END
+
+MENU ID SetupMenu
+BEGIN
+    PULLDOWN "Realm"
+    BEGIN
+        MENUITEM "Default Server" ID SetupMenuDefault
+        MENUITEM "Forget My Name" ID SetupMenuForget
+    END
+    PULLDOWN "Help"
+    BEGIN
+        MENUITEM "How to Play" ID SetupMenuHelpPlay "H"
+        MENUITEM "Talking & Quests" ID SetupMenuHelpTalk "T"
+        MENUITEM SEPARATOR
+        MENUITEM "About FujiRealm" ID SetupMenuAbout "A"
+    END
+END
+
+MENU ID GameMenu
+BEGIN
+    PULLDOWN "Realm"
+    BEGIN
+        MENUITEM "Toggle PvP" ID GameMenuPvp "P"
+        MENUITEM "Link Statistics" ID GameMenuDiag "D"
+        MENUITEM SEPARATOR
+        MENUITEM "Leave the Realm" ID GameMenuLeave "L"
+    END
+    PULLDOWN "Help"
+    BEGIN
+        MENUITEM "How to Play" ID GameMenuHelpPlay "H"
+        MENUITEM "Talking & Quests" ID GameMenuHelpTalk "T"
+        MENUITEM SEPARATOR
+        MENUITEM "About FujiRealm" ID GameMenuAbout "A"
+    END
+END
+
+ALERT ID RomIncompatibleAlert
+ERROR
+BEGIN
+    TITLE "FN Realm"
+    MESSAGE "Legacy cradle needs Palm OS 3.3 or later. Choose another link."
+    BUTTONS "OK"
+END
+
+ALERT ID MessageAlert
+ERROR
+BEGIN
+    TITLE "FN Realm"
+    MESSAGE "^1^2^3"
+    BUTTONS "OK"
+END
+
+STRING ID HelpPlayString "FujiRealm is one live world, shared by everyone playing on the Atari, Lynx, Amiga, CoCo 3 and Palm. Everything is done with the stylus.\n\n"\
+"WALK: tap where you want to go, or hold the stylus down and steer. You keep walking after you lift it.\n\n"\
+"FIGHT: tap a monster to shoot at it. With PvP on, tap another player.\n\n"\
+"PICK UP: walk over gold, herbs, sticks and other items.\n\n"\
+"USE: tap yourself, or the text below the map. This is Enter on the other machines: it talks to whoever is beside you and picks up what lies next to you.\n\n"\
+"MENU: tap the Menu button for PvP, help, and to leave the realm.\n\n"\
+"BUTTONS: the middle scroll buttons move up and down. Choose Prism on setup for Contacts left, To Do right, Memo fire and Date use; Original keeps Date left, Contacts right, To Do fire and Memo use."
+
+STRING ID HelpTalkString "TALKING: tap a person. You walk over to them and start talking.\n\n"\
+"In a conversation, tap anywhere to read on. When someone offers you a quest, tap Accept or Decline.\n\n"\
+"QUESTS: your current quest is the bottom line of the screen, and news from the realm appears just above it. Quests send you to other people, into the caves below, and to fight.\n\n"\
+"PvP: choose Toggle PvP from the Realm menu, or write P. With PvP on you can shoot other players, and they can shoot you. The top line shows your health, level, gold and PvP kills."
